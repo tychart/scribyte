@@ -1,14 +1,24 @@
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 import tempfile
 
+import httpx
 import numpy as np
-from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.main import create_app
 from app.services.recorder import RecorderStateError
+
+
+@asynccontextmanager
+async def make_test_client(app):
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            yield client
 
 
 class FakeRecorder:
@@ -47,8 +57,11 @@ class FakeTranscriber:
 def test_status_reports_ready() -> None:
     app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
-    with TestClient(app) as client:
-        response = client.get("/status")
+    async def run_test() -> httpx.Response:
+        async with make_test_client(app) as client:
+            return await client.get("/status")
+
+    response = asyncio.run(run_test())
 
     assert response.status_code == 200
     assert response.json()["ready"] is True
@@ -58,9 +71,13 @@ def test_status_reports_ready() -> None:
 def test_recording_flow_round_trip() -> None:
     app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
-    with TestClient(app) as client:
-        start_response = client.post("/start_recording")
-        stop_response = client.post("/stop_recording_and_transcribe")
+    async def run_test() -> tuple[httpx.Response, httpx.Response]:
+        async with make_test_client(app) as client:
+            start_response = await client.post("/start_recording")
+            stop_response = await client.post("/stop_recording_and_transcribe")
+            return start_response, stop_response
+
+    start_response, stop_response = asyncio.run(run_test())
 
     assert start_response.status_code == 200
     assert stop_response.status_code == 200
@@ -71,9 +88,13 @@ def test_recording_flow_round_trip() -> None:
 def test_double_start_returns_conflict() -> None:
     app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
-    with TestClient(app) as client:
-        first = client.post("/start_recording")
-        second = client.post("/start_recording")
+    async def run_test() -> tuple[httpx.Response, httpx.Response]:
+        async with make_test_client(app) as client:
+            first = await client.post("/start_recording")
+            second = await client.post("/start_recording")
+            return first, second
+
+    first, second = asyncio.run(run_test())
 
     assert first.status_code == 200
     assert second.status_code == 409
@@ -82,8 +103,11 @@ def test_double_start_returns_conflict() -> None:
 def test_stop_without_start_returns_conflict() -> None:
     app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
-    with TestClient(app) as client:
-        response = client.post("/stop_recording_and_transcribe")
+    async def run_test() -> httpx.Response:
+        async with make_test_client(app) as client:
+            return await client.post("/stop_recording_and_transcribe")
+
+    response = asyncio.run(run_test())
 
     assert response.status_code == 409
 
@@ -92,8 +116,11 @@ def test_short_recording_returns_bad_request() -> None:
     short_audio = np.ones(1000, dtype=np.float32)
     app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder(audio=short_audio))
 
-    with TestClient(app) as client:
-        client.post("/start_recording")
-        response = client.post("/stop_recording_and_transcribe")
+    async def run_test() -> httpx.Response:
+        async with make_test_client(app) as client:
+            await client.post("/start_recording")
+            return await client.post("/stop_recording_and_transcribe")
+
+    response = asyncio.run(run_test())
 
     assert response.status_code == 400

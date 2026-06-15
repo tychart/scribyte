@@ -4,6 +4,7 @@ import sys
 
 import librosa
 import pytest
+import soundfile as sf
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -11,6 +12,19 @@ from app.services.transcriber import WhisperTranscriber
 
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "test-audio"
+
+
+def _load_fixture_audio(audio_path: Path) -> tuple[object, int]:
+    audio, sample_rate = sf.read(audio_path, dtype="float32", always_2d=False)
+
+    if getattr(audio, "ndim", 1) > 1:
+        audio = audio.mean(axis=1)
+
+    if sample_rate != 16000:
+        audio = librosa.resample(audio, orig_sr=sample_rate, target_sr=16000)
+        sample_rate = 16000
+
+    return audio, sample_rate
 
 
 def _normalize_text(value: str) -> str:
@@ -47,7 +61,7 @@ def test_npu_transcription_matches_reference_audio(audio_path: Path, transcript_
     if not expected_text:
         pytest.fail(f"Expected transcript file is empty: {transcript_path}")
 
-    audio, _ = librosa.load(audio_path, sr=16000, mono=True)
+    audio, _ = _load_fixture_audio(audio_path)
     transcriber = WhisperTranscriber(device="NPU")
     result = transcriber.transcribe(audio)
 
