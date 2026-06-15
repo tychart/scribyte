@@ -1,189 +1,146 @@
 # Scribyte
 
-Windows-first local dictation using OpenVINO Whisper with Intel NPU acceleration.
+Scribyte is a Windows-first (Purely becuse my machine's NPU dosn't work through WSL) local dictation tool built around a simple loop:
 
-## Python version
+```text
+Hold hotkey -> record microphone -> release -> transcribe locally -> paste text
+```
 
-Use Python 3.11 for this project.
+Today the repo is optimized for Windows, FastAPI, AutoHotkey v2, and OpenVINO Whisper on Intel NPU. Linux compatibility and whisper processing fallback (from NPU -> GPU -> CPU is a future goal), but the current setup and support guidance in this document are Windows-specific.
 
-Newer Python versions can break parts of the OpenVINO and Whisper tooling stack. This repo is pinned to 3.11 on purpose.
+## What the repo does today
 
-## Prerequisites
+- Runs a local FastAPI service that keeps the Whisper model loaded in memory.
+- Records microphone audio in Python with `sounddevice`.
+- Prefers a matching Windows WASAPI input device when choosing the microphone.
+- Resamples captured audio to 16 kHz before transcription.
+- Splits long recordings on silence before sending chunks into Whisper.
+- Saves each captured recording to a debug WAV under `%TEMP%\scribyte-debug-recordings`.
+- Provides an AutoHotkey client in `scribyte.ahk` for hold-to-talk dictation and paste.
 
-1. Install `uv`.
-2. Install FFmpeg on Windows and add its `bin` directory to `PATH`.
-3. Make sure Intel NPU drivers are installed if you want to run on `NPU`.
-4. Install AutoHotkey v2 if you want the hold-to-talk desktop hotkey.
+## Architecture
 
-## Fresh install
+- `app/`: FastAPI application, routes, dependencies, schemas, and services.
+- `scripts/`: local utility scripts for hardware checks and recorder debugging.
+- `tests/`: API tests and NPU-backed transcription fixture tests.
+- `docs/reference/`: reference code kept for comparison, not production runtime.
+- `scribyte.ahk`: Windows desktop hotkey client for the local API.
 
-Create or sync the environment with UV:
+The important design rule is that the Whisper pipeline is created once at startup and reused for every request. Do not move model initialization into request handlers unless you are intentionally changing the latency model.
+
+## Getting started on Windows
+
+This section is the shortest path from a clean Windows machine to a working local dictation setup.
+
+### 1. Install prerequisites
+
+Install these first:
+
+1. Python package manager `uv`: https://docs.astral.sh/uv/
+2. AutoHotkey v2 if you want the desktop hold-to-talk workflow
+3. Intel NPU drivers if you want to run on `NPU`
+
+Notes:
+
+- The project is pinned to Python 3.11.
+- Newer Python versions can break parts of the OpenVINO and Whisper toolchain.
+- If you only want to inspect the code or run some non-hardware tests, you can do that without AutoHotkey.
+
+### 2. Clone the repo
+
+```powershell
+git clone <your-repo-url>
+cd scribyte
+```
+
+### 3. Install Python 3.11 and sync dependencies
 
 ```powershell
 uv python install 3.11
 uv sync
-uv sync --group model-export
 uv sync --group dev
+uv sync --group model-export
 ```
 
-If you prefer to recreate the venv explicitly:
+If you prefer to recreate the environment explicitly first:
 
 ```powershell
 uv venv --python 3.11
 uv sync
-uv sync --group model-export
 uv sync --group dev
+uv sync --group model-export
 ```
 
-## Convert Whisper to OpenVINO IR
+### 4. Make sure the Whisper OpenVINO model exists
 
-Export the base Whisper model into the local `whisper_base_ov` directory:
+This repo expects a local exported model directory named `whisper_base_ov`.
+
+If you do not already have it, generate it by running the following command on the project's root directory:
 
 ```powershell
 uv run --group model-export optimum-cli export openvino --model openai/whisper-base whisper_base_ov
 ```
 
-`optimum-cli` is exposed by the `optimum` dependency that comes in through `optimum-intel` in the `model-export` group. It is not a package you add directly with `uv add optimum-cli`.
-
-Expected output is a folder like:
+Expected output is a folder named `whisper_base_ov` containing files such as:
 
 ```text
-whisper_base_ov/
-	encoder.xml
-	decoder.xml
-	config.json
-	generation_config.json
-	openvino_tokenizer.xml
-	openvino_detokenizer.xml
+config.json
+generation_config.json
+openvino_encoder_model.xml
+openvino_decoder_model.xml
+openvino_tokenizer.xml
+openvino_detokenizer.xml
 ```
 
-## Verify OpenVINO devices
+### 5. Verify that OpenVINO can see your devices
 
-Create a quick check script or use the one in this repo once it exists:
-
-```python
-from openvino import Core
-
-core = Core()
-print(core.available_devices)
-```
-
-Run it with:
+Run:
 
 ```powershell
 uv run python scripts/check_device.py
 ```
 
-On a machine with the Intel NPU exposed correctly, you should see `NPU` in the output.
+If your machine is configured correctly for Intel NPU, you should see `NPU` in the printed device list.
 
-## Audio notes
+### 6. Start the local API
 
-- Whisper input should be 16 kHz mono audio.
-- FFmpeg is required for some audio decoding workflows.
-- The dictation service will record in Python; AutoHotkey should not handle audio capture.
+Use the configured FastAPI entrypoint:
 
-## Current reference script
-
-The current working transcription reference is `docs/reference/silence_chunked_whisper.py`.
-
-It proves:
-
-- OpenVINO Whisper runs on this machine
-- silence-aware chunking works
-- the NPU call path is valid
-
-That file is the source of truth while the FastAPI service is being built.
-
-## Planned app workflow
-
-The target workflow is:
-
-```text
-Hold hotkey -> record microphone -> release -> transcribe on NPU -> paste text
+Production (localhost only):
+```powershell
+uv run fastapi run --host 127.0.0.1
 ```
 
-Architecture split:
-
-- Python / FastAPI: audio capture, persistent Whisper model, transcription
-- AutoHotkey v2: hotkeys, toasts, API calls, paste
-
-## FastAPI project structure
-
-The backend follows FastAPI's recommended bigger-application layout, with the API code isolated under `app/` and non-production utilities separated out:
-
-```text
-app/
-	__init__.py
-	main.py
-	dependencies.py
-	api/
-		__init__.py
-		routes/
-			__init__.py
-			dictation.py
-	core/
-		__init__.py
-		config.py
-	schemas/
-		__init__.py
-		dictation.py
-	services/
-		__init__.py
-		recorder.py
-		transcriber.py
-scripts/
-	check_device.py
-	wasapi_debug.py
-docs/
-	reference/
-		silence_chunked_whisper.py
-tests/
-	test_api.py
-```
-
-Why this shape:
-
-- `app/main.py` keeps the actual `FastAPI` application factory and lifespan wiring small.
-- `app/api/routes/` holds HTTP routes through `APIRouter`.
-- `app/services/` holds recorder and transcription logic outside of HTTP handlers.
-- `app/schemas/` holds request and response models.
-- `app/dependencies.py` centralizes shared FastAPI dependency helpers.
-- `scripts/` holds local developer and hardware-debug utilities that are not part of the API package.
-- `docs/reference/` holds prototype/reference code that should not be mistaken for live application code.
-
-## Run the API
-
-With the FastAPI entrypoint configured in `pyproject.toml`, you can run the service with:
+Development
 
 ```powershell
 uv run fastapi dev
 ```
 
-Or directly with Uvicorn:
+Alternative:
 
 ```powershell
 uv run python -m app.main
 ```
 
-For local hardware diagnostics:
+The plain `fastapi run` command binds to `0.0.0.0` by default, so use the explicit `--host 127.0.0.1` flag above when you want the production server exposed only to the local machine.
 
-```powershell
-uv run python scripts/wasapi_debug.py --list
-```
+With the commands above, the app listens on `http://127.0.0.1:8000`.
 
-## AutoHotkey v2 script
+### 7. Confirm the backend is healthy
 
-The repo now includes `scribyte.ahk`, a local hold-to-talk client for the FastAPI service.
+Open these in your browser after the server starts:
 
-What it does:
+1. `http://127.0.0.1:8000/status`
+2. `http://127.0.0.1:8000/docs`
 
-- hold a hotkey to call `POST /start_recording`
-- release the hotkey to call `POST /stop_recording_and_transcribe`
-- copy the returned text to the clipboard
-- paste it into the active window with `Ctrl+V`
-- show short on-screen status messages for recording, errors, and backend readiness
+`/status` should report whether the transcriber is ready, whether a recording is active, the sample rate, the selected runtime device, and the debug recordings directory.
 
-Default script settings are at the top of `scribyte.ahk`:
+### 8. Launch the AutoHotkey client
+
+Run `scribyte.ahk` with AutoHotkey v2.
+
+Default script settings:
 
 ```ahk
 global SCRIBYTE_API_URL := "http://127.0.0.1:8000"
@@ -191,43 +148,160 @@ global SCRIBYTE_HOLD_KEY := "F8"
 global SCRIBYTE_PASTE_SHORTCUT := "^v"
 ```
 
-Typical usage:
+Typical use:
 
-1. Start the API with `uv run fastapi dev` or `uv run python -m app.main`.
-2. Launch `scribyte.ahk` with AutoHotkey v2.
-3. Focus the target app.
-4. Hold `F8` while speaking, then release it to transcribe and paste.
+1. Start the API.
+2. Launch `scribyte.ahk`.
+3. Focus the app where you want text pasted.
+4. Hold `F8` while speaking.
+5. Release `F8` to transcribe and paste.
 
-Notes:
+The tray menu also includes `Check Scribyte Status` for a quick readiness check.
 
-- The script assumes the API is listening on `127.0.0.1:8000`.
-- If you change the backend host or port, update `SCRIBYTE_API_URL` in the script.
-- If `F8` conflicts with something else on your machine, change `SCRIBYTE_HOLD_KEY` to another key name supported by AutoHotkey v2.
-- The tray menu includes a `Check Scribyte Status` action for a quick readiness check.
+### 9. If dictation quality is poor, inspect the captured audio first
 
-## NPU transcription integration test
+Every successful transcription request saves a debug WAV file under:
 
-To separate recorder problems from transcription problems, there is an integration test that loads real audio fixtures and runs them through the actual `WhisperTranscriber` on `NPU`.
+```text
+%TEMP%\scribyte-debug-recordings
+```
 
-Fixture convention:
+If the transcription quality is bad, listen to the saved WAV before changing model code. If the audio sounds wrong there, the problem is likely capture or device selection rather than Whisper itself.
 
-- put WAV fixtures in `tests/test-audio/`
-- add a matching `.txt` file with the expected transcription
-- example: `sample1.wav` and `sample1.txt`
+## API summary
 
-The expected text does not need to match punctuation exactly; the test normalizes casing and punctuation before comparing.
+The current API surface is:
 
-Run just the NPU integration test with:
+- `GET /status`
+- `POST /start_recording`
+- `POST /stop_recording_and_transcribe`
+
+### `GET /status`
+
+Returns runtime metadata including:
+
+- `ready`
+- `device`
+- `model_path`
+- `recording`
+- `sample_rate`
+- `startup_error`
+- `debug_recordings_dir`
+
+### `POST /start_recording`
+
+Starts microphone capture.
+
+Current behavior:
+
+- Returns `200` on success
+- Returns `409` if a recording is already in progress
+- Returns `503` if the transcriber failed to initialize at startup
+- Returns the selected input device name in `input_device`
+
+### `POST /stop_recording_and_transcribe`
+
+Stops microphone capture, saves a debug WAV, and transcribes the captured audio.
+
+Current behavior:
+
+- Returns `200` on success
+- Returns `409` if no recording is active
+- Returns `400` if the captured audio is too short to transcribe
+- Returns `500` if Whisper transcription fails at runtime
+
+The response includes:
+
+- `text`
+- `chunk_count`
+- `duration_seconds`
+- `latency_seconds`
+- `debug_audio_path`
+
+## Utility scripts
+
+Use these when debugging local setup instead of changing app code blindly.
+
+### Check OpenVINO devices
 
 ```powershell
+uv run python scripts/check_device.py
+```
+
+### Inspect WASAPI microphone selection
+
+List detected WASAPI inputs:
+
+```powershell
+uv run python scripts/wasapi_debug.py --list
+```
+
+Record a short sample from the default-matching WASAPI microphone:
+
+```powershell
+uv run python scripts/wasapi_debug.py
+```
+
+Record from a specific WASAPI device index:
+
+```powershell
+uv run python scripts/wasapi_debug.py --device-index 14 --seconds 8
+```
+
+The script writes both a raw capture and a prepared 16 kHz WAV into a temp debug directory so you can compare input quality before and after preprocessing.
+
+## Testing
+
+Recommended checks:
+
+```powershell
+uv run pyright
+uv run pytest
+uv run pytest tests/test_api.py
 uv run pytest -m npu tests/test_npu_transcription.py -rs
 ```
 
-If this test passes but the API still returns output like `"you"` for long dictation, the problem is likely in the recording path or the captured microphone audio rather than the NPU transcription pipeline itself.
+What they cover:
 
-## Next implementation steps
+- `uv run pyright`: strict type checking
+- `uv run pytest`: full test suite
+- `tests/test_api.py`: hardware-free API and recorder-selection behavior
+- `tests/test_npu_transcription.py`: real NPU-backed transcription against committed fixtures
 
-1. Build the FastAPI app with a persistent `WhisperPipeline` loaded once at startup.
-2. Add microphone recording endpoints.
-3. Reuse the silence-aware chunking logic from the reference script.
-4. Manually validate the AutoHotkey hold-to-talk flow against live microphone input.
+The NPU fixture test does not require exact punctuation matching. It normalizes and compares the expected phrase or token overlap instead.
+
+## Project layout
+
+```text
+app/
+  api/
+  core/
+  schemas/
+  services/
+docs/
+  reference/
+scripts/
+tests/
+typings/
+scribyte.ahk
+README.md
+pyproject.toml
+```
+
+## Reference code
+
+`docs/reference/silence_chunked_whisper.py` is kept as a reference implementation for chunking and OpenVINO Whisper behavior. It is useful when comparing service behavior against the original working prototype, but it is not part of the live FastAPI runtime.
+
+## Current limitations
+
+- Windows is the only documented and supported workflow right now.
+- The runtime currently initializes the transcriber on `NPU` in `app/main.py`.
+- There is no device fallback chain yet.
+- Microphone capture debugging still starts with listening to saved WAV output.
+
+## Development notes
+
+- Keep the API code under `app/`.
+- Keep operator or hardware utilities under `scripts/`.
+- Keep prototypes and historical reference code under `docs/reference/`.
+- Keep audio capture in Python, not AutoHotkey.

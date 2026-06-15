@@ -2,257 +2,165 @@
 
 ## Purpose
 
-Scribyte is a Windows-first local dictation project built around this workflow:
+Scribyte is a Windows-first (Purely becuse my machine's NPU dosn't work through WSL) local dictation project built around this flow:
 
 ```text
-Hold hotkey -> record microphone -> release -> transcribe on Intel NPU -> paste text
+Hold hotkey -> record microphone -> release -> transcribe locally -> paste text
 ```
 
-The intended split is:
+Current architecture split:
 
-- FastAPI in Python is the compute plane.
-- AutoHotkey v2 is the control plane.
-- OpenVINO Whisper on Intel NPU is the transcription engine.
+- FastAPI in Python is the runtime and compute plane.
+- AutoHotkey v2 is the desktop control plane.
+- OpenVINO Whisper is the transcription engine.
 
-The project is optimized for low-latency repeated dictation, so the Whisper model must stay loaded in memory and must not be recreated per request.
+The runtime is optimized for repeated low-latency dictation, so the Whisper model must remain loaded in memory and must not be recreated per request.
 
 ## Current State
 
-### Implemented
+What is implemented now:
 
-The repo already contains a functioning backend foundation.
+1. UV-managed Python project setup with Python pinned to 3.11.
+2. A package-style FastAPI backend under `app/`.
+3. Startup-time Whisper initialization through the FastAPI lifespan hook.
+4. Python-side microphone capture using `sounddevice`.
+5. WASAPI-first microphone selection logic for Windows.
+6. Audio preprocessing that resamples captured input to 16 kHz.
+7. Silence-aware chunking in the transcription path.
+8. Debug WAV capture to `%TEMP%\scribyte-debug-recordings`.
+9. A local AutoHotkey hold-to-talk client in `scribyte.ahk`.
+10. Hardware-free API tests plus an NPU-backed fixture test.
 
-1. UV-managed Python project setup is in place.
-2. Python is pinned to 3.11.
-3. Runtime, model-export, and dev dependencies are declared in `pyproject.toml`.
-4. The backend follows a package-style FastAPI structure under `app/`.
-5. The FastAPI app uses a lifespan handler to initialize the persistent Whisper pipeline once at startup.
-6. A Python-side microphone recorder exists using `sounddevice`.
-7. The API exposes:
-   - `GET /status`
-   - `POST /start_recording`
-   - `POST /stop_recording_and_transcribe`
-8. Silence-aware chunking from the original working script has been preserved in the service layer.
-9. Hardware-free API tests exist and currently pass.
-10. A real NPU integration test exists and currently passes against committed fixture audio.
-11. The API now saves each captured microphone recording to a debug WAV file under the Windows temp directory and returns that path in the transcription response.
+## Validated Checks
 
-### Validated
+These commands have succeeded in this repo state:
 
-The following checks have already succeeded during implementation:
+1. `uv run pyright`
+2. `uv run pytest`
+3. `uv run pytest tests/test_api.py`
+4. `uv run pytest -m npu tests/test_npu_transcription.py -rs`
 
-1. `uv lock`
-2. Python compile checks for the FastAPI package and tests
-3. `uv run pyright`
-4. `uv run pytest`
-5. `uv run pytest tests/test_api.py`
-6. `uv run pytest -m npu tests/test_npu_transcription.py -rs`
+Implication:
 
-That means the NPU transcription path works on at least one known-good fixture and the current likely fault boundary for bad live dictation is the microphone capture path, not the Whisper NPU path itself.
+- If the NPU fixture test passes but live dictation quality is poor, the likely fault boundary is microphone capture or device selection, not the basic Whisper-on-NPU path.
 
-## Project Structure
+## Repository Layout
 
 ```text
 app/
-  __init__.py
-  main.py
-  dependencies.py
   api/
-    __init__.py
-    routes/
-      __init__.py
-      dictation.py
   core/
-    __init__.py
-    config.py
   schemas/
-    __init__.py
-    dictation.py
   services/
-    __init__.py
-    debug_audio.py
-    recorder.py
-    transcriber.py
-tests/
-  test_api.py
-  test_npu_transcription.py
-  test-audio/
-    sample1.wav
-    sample1.txt
-scripts/
-  check_device.py
-  wasapi_debug.py
 docs/
   reference/
-    silence_chunked_whisper.py
+scripts/
+tests/
+typings/
+scribyte.ahk
 README.md
-pyproject.toml
 AGENTS.md
+pyproject.toml
 ```
+
+Layout rules:
+
+- Keep FastAPI runtime code in `app/`.
+- Keep developer or hardware-debug scripts in `scripts/`.
+- Keep prototype or historical reference code in `docs/reference/`.
+- Keep `scribyte.ahk` at the repo root for operator convenience.
 
 ## Important Files
 
-### Source of Truth
-
-- `docs/reference/silence_chunked_whisper.py`
-  - Original working script.
-  - Use this as the behavioral source of truth for chunking and OpenVINO Whisper usage.
-
-### FastAPI App
+### Runtime entrypoints
 
 - `app/main.py`
-  - App factory and lifespan wiring.
-  - Loads the persistent transcriber once at startup.
+  - App factory and FastAPI lifespan wiring.
+  - Initializes the transcriber once on startup.
 
 - `app/api/routes/dictation.py`
-  - HTTP routes for status, start recording, and stop/transcribe.
+  - Owns `GET /status`, `POST /start_recording`, and `POST /stop_recording_and_transcribe`.
 
 - `app/dependencies.py`
-  - Shared dependency helpers for app state access.
+  - Owns state access and `503` behavior when the transcriber is not ready.
 
-### Services
+### Recorder path
 
-- `app/services/transcriber.py`
-  - Persistent Whisper wrapper.
-  - Silence-aware chunking.
-  - NPU transcription logic.
+- `app/services/recorder_sounddevice.py`
+  - Live `sounddevice` recorder state and stream lifecycle.
 
-- `app/services/recorder.py`
-  - Microphone capture and recorder state.
+- `app/services/recorder_devices.py`
+  - WASAPI device discovery, filtering, and default-match selection.
+
+- `app/services/recorder_audio.py`
+  - Audio cleanup and resampling helpers.
 
 - `app/services/debug_audio.py`
-  - Writes captured microphone audio to a local debug WAV file.
+  - Writes captured microphone audio to a temp WAV file for diagnosis.
 
-### Schemas and Config
+### Transcription path
 
-- `app/schemas/dictation.py`
-  - Response models.
+- `app/services/transcriber.py`
+  - Persistent Whisper wrapper and silence-aware chunking.
 
-- `app/core/config.py`
-  - Central constants such as sample rate, model path, silence thresholds, and debug recording directory.
+- `docs/reference/silence_chunked_whisper.py`
+  - Original prototype/reference implementation.
+  - Use it for behavioral comparison, not as live runtime code.
 
-### Tests
+### Operator utilities
 
-- `tests/test_api.py`
-  - Hardware-free API behavior tests.
+- `scripts/check_device.py`
+  - Prints the OpenVINO device list.
 
-- `tests/test_npu_transcription.py`
-  - Real NPU integration test using committed fixture audio.
+- `scripts/wasapi_debug.py`
+  - Lists WASAPI inputs and records debug WAV samples.
 
-- `tests/test-audio/`
-  - Repo-local audio fixtures for NPU transcription validation.
+### Client
 
-## Runtime and Setup Decisions
+- `scribyte.ahk`
+  - Hotkey-driven local desktop client for the API.
 
-### Python Version
+## Runtime Behavior
 
-Use Python 3.11.
+### Startup
 
-Reason:
+On startup the app:
 
-- This stack was validated with 3.11.
-- Newer Python versions can break parts of the OpenVINO and Whisper toolchain.
-- Only downgrade to 3.10 if actual compatibility issues force it.
+1. Creates the FastAPI app.
+2. Attempts to initialize `WhisperTranscriber` with `device="NPU"`.
+3. Warms the transcriber once.
+4. Creates a recorder state object using the transcriber sample rate when available.
 
-### Package Management
+If transcriber initialization fails, the server can still start, but transcription-dependent endpoints will return `503` and `/status` will expose `startup_error`.
 
-Use UV for everything.
+### API contract
 
-Do not rely on ad hoc `pip install` commands if the dependency belongs in project metadata.
+The live API surface is:
 
-### Model Workflow
+- `GET /status`
+- `POST /start_recording`
+- `POST /stop_recording_and_transcribe`
 
-The current documented workflow is:
+`GET /status` returns readiness, runtime device, model path, recording state, sample rate, startup error, and debug recordings directory.
 
-```powershell
-uv run optimum-cli export openvino --model openai/whisper-base whisper_base_ov
-```
+`POST /start_recording`:
 
-The project assumes a local exported OpenVINO model directory named `whisper_base_ov`.
+- starts microphone capture
+- returns `409` if already recording
+- returns `503` if the transcriber is not ready
+- returns the selected input device name
 
-### FFmpeg
+`POST /stop_recording_and_transcribe`:
 
-FFmpeg is a Windows prerequisite and is intentionally documented outside Python dependencies.
-
-## API Behavior
-
-### `GET /status`
-
-Returns readiness and runtime metadata, including:
-
-- whether the transcriber is ready
-- selected device
-- model path
-- recording state
-- sample rate
-- startup error if initialization failed
-- debug recordings directory
-
-### `POST /start_recording`
-
-Starts microphone capture.
-
-Expected behavior:
-
-- returns `409` if recording is already in progress
-- returns `503` if the transcriber failed to initialize
-
-### `POST /stop_recording_and_transcribe`
-
-Stops capture, writes a debug WAV file, runs silence-aware chunking, and transcribes through the persistent Whisper model.
-
-Expected behavior:
-
-- returns `409` if recording is not active
-- returns `400` if the recording is too short
-- returns transcription payload including:
-  - `text`
-  - `chunk_count`
-  - `duration_seconds`
-  - `latency_seconds`
-  - `debug_audio_path`
-
-## Debug Audio Behavior
-
-Captured microphone audio is written to an app-specific Windows temp directory using Python's tempdir:
-
-```text
-%TEMP%\scribyte-debug-recordings
-```
-
-This is the preferred location over a repo-local debug directory because:
-
-- it avoids cluttering the repo
-- it behaves like a machine-local `/tmp`
-- the files are purely diagnostic artifacts
-
-If live dictation quality is poor, inspect the returned `debug_audio_path` first. That is the fastest way to determine whether the problem is in capture or transcription.
+- stops capture
+- rejects inactive recording state with `409`
+- rejects very short captures with `400`
+- saves a debug WAV before transcription
+- returns text, chunk count, duration, latency, and debug WAV path
 
 ## Testing Strategy
 
-### Hardware-Free Tests
-
-Use `tests/test_api.py` for:
-
-- status response shape
-- start/stop flow
-- invalid state transitions
-- short recording rejection
-
-### Real NPU Tests
-
-Use `tests/test_npu_transcription.py` for:
-
-- real transcription quality against trusted fixture WAV files
-- validation that the actual OpenVINO NPU path produces usable text
-
-Fixture convention:
-
-- each `*.wav` in `tests/test-audio/`
-- must have a matching `*.txt`
-- example: `sample1.wav` and `sample1.txt`
-
-Recommended commands:
+Use these checks after code changes:
 
 ```powershell
 uv run pyright
@@ -261,107 +169,46 @@ uv run pytest tests/test_api.py
 uv run pytest -m npu tests/test_npu_transcription.py -rs
 ```
 
+What they mean:
+
+- `tests/test_api.py` covers API behavior and recorder-device selection logic without hardware.
+- `tests/test_npu_transcription.py` validates real transcription quality against committed WAV fixtures on `NPU`.
+
 Validation rule:
 
-- After every code change, run `uv run pyright` and the normal `uv run pytest` suite before considering the work complete.
+- After code changes, run at least `uv run pyright` and `uv run pytest` before considering the work done.
+- If you changed transcription behavior, also run the NPU fixture test when the environment supports it.
 
-## Known Findings
+## Debugging Guidance
 
-1. The NPU transcription path passed the real fixture test.
-2. Therefore, a live API result like `"you"` from a long utterance is more likely caused by microphone capture quality or input-device behavior than by Whisper on NPU.
-3. The next debugging step for bad live transcription should start with listening to the saved debug WAV file.
+When live transcription quality is poor:
 
-## Big Picture Plan
+1. Inspect the `debug_audio_path` returned by the API.
+2. Listen to the saved WAV under `%TEMP%\scribyte-debug-recordings`.
+3. If the audio sounds wrong, debug capture or device selection before changing model logic.
+4. Use `scripts/wasapi_debug.py` to compare raw and prepared microphone audio.
 
-### Phase 0: Foundation
+## Constraints and Invariants
 
-Completed or largely completed:
+1. Preserve the persistent model lifecycle.
+2. Keep audio capture in Python, not in AutoHotkey.
+3. Reuse the current silence-aware chunking behavior unless there is a deliberate tested reason to change it.
+4. Prefer adding runtime code under `app/` instead of adding new root-level Python modules.
+5. Keep reference-only code out of the live import path.
 
-1. Pin Python 3.11.
-2. Manage dependencies in `pyproject.toml`.
-3. Document the validated UV-based Windows setup in `README.md`.
-4. Preserve the original working script as a reference implementation.
+## Near-Term Gaps
 
-### Phase 1: Backend MVP
+These are still open and should be documented as present limitations, not hidden assumptions:
 
-Completed or largely completed:
+1. Windows is the only documented target platform right now.
+2. The runtime currently hardcodes `NPU` startup in `app/main.py`.
+3. There is no `NPU -> GPU -> CPU` fallback chain yet.
+4. Optional microphone device selection is not yet exposed through the API.
 
-1. Extract reusable transcription logic into modules.
-2. Build a persistent FastAPI transcriber service using lifespan.
-3. Add Python-side microphone recording.
-4. Implement the MVP API contract.
-5. Add hardware-free tests.
-6. Add NPU-backed fixture tests.
-7. Add debug WAV dumping to inspect captured audio.
+## Documentation Ownership
 
-### Phase 1 Remaining
+When the runtime behavior changes, keep these files aligned:
 
-Still to do:
-
-1. Real-world manual validation across more than one utterance length.
-2. Investigate microphone capture quality if debug WAVs sound bad.
-3. Verify behavior across different input devices if needed.
-
-### Phase 2: AutoHotkey Integration
-
-Planned:
-
-1. Add an AutoHotkey v2 script.
-2. Bind a hold-to-talk hotkey.
-3. Call `POST /start_recording` on key down.
-4. Call `POST /stop_recording_and_transcribe` on key up.
-5. Show toasts for recording, transcribing, success, and failure.
-6. Copy the returned text to the clipboard and paste with `Ctrl+V`.
-
-Important rule:
-
-- AHK should never handle audio capture directly.
-
-### Phase 2: Hardening
-
-Planned:
-
-1. Improve diagnostics and error payloads.
-2. Add clearer logging around startup, device readiness, and capture failures.
-3. Add optional microphone device selection.
-4. Add fallback device strategy if NPU is unavailable, likely `NPU -> GPU -> CPU`.
-5. Improve README operator guidance for daily use.
-
-### Phase 2: Configuration and Packaging
-
-Planned:
-
-1. Keep central settings in the config layer.
-2. Document expected model layout and run commands.
-3. Optionally add launcher tasks or helper scripts.
-
-### Phase 3: Explicitly Out of MVP
-
-Do not prioritize these until the hold-to-talk path is stable:
-
-1. Streaming partial transcription
-2. LLM cleanup passes
-3. Tray app packaging
-4. Startup-on-login automation
-5. Alternate IPC layers beyond local HTTP
-
-## Guidance for Future Changes
-
-1. Preserve the persistent model lifecycle. Do not move `WhisperPipeline` creation into request handlers.
-2. Keep audio capture in Python, not in AHK.
-3. Reuse the silence-aware chunking behavior from the original working script unless there is a deliberate, tested reason to change it.
-4. Validate narrow behavior after edits:
-  - `uv run pyright`
-  - `uv run pytest`
-   - compile checks for touched modules
-   - hardware-free tests for API behavior
-   - NPU fixture test when touching transcription behavior
-5. When debugging live transcription quality, inspect the debug WAV before changing model logic.
-6. Prefer adding settings and structure inside the `app/` package instead of growing flat root modules.
-
-## Recommended Immediate Next Steps
-
-1. Use the returned `debug_audio_path` from a bad dictation run and listen to the file.
-2. If the file sounds wrong, debug the recorder or microphone device path next.
-3. If the file sounds clean but transcription is still poor, inspect preprocessing and chunking around live-recorded audio.
-4. After backend behavior is stable, implement the AutoHotkey hold-to-talk script.
+1. `README.md` for user setup and operations.
+2. `AGENTS.md` for repository conventions and maintenance guidance.
+3. `docs/reference/README.md` for the role of archived reference code.
