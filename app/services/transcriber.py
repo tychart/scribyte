@@ -1,7 +1,9 @@
 import time
+from typing import Iterator, TypedDict
 
 import librosa
 import numpy as np
+from numpy.typing import NDArray
 import openvino_genai as ov_genai
 
 from app.core.config import (
@@ -19,10 +21,17 @@ class WhisperTranscriberError(RuntimeError):
     pass
 
 
+class TranscriptionResult(TypedDict):
+    text: str
+    chunk_count: int
+    duration_seconds: float
+    latency_seconds: float
+
+
 def silence_aware_chunks(
-    audio: np.ndarray,
+    audio: NDArray[np.float32],
     max_chunk_seconds: int = MAX_CHUNK_SECONDS,
-):
+) -> Iterator[NDArray[np.float32]]:
     max_chunk_samples = max_chunk_seconds * SAMPLE_RATE
     min_silence_samples = int(MIN_SILENCE_SECONDS * SAMPLE_RATE)
     intervals = librosa.effects.split(audio, top_db=TOP_DB, frame_length=512, hop_length=128)
@@ -72,7 +81,7 @@ class WhisperTranscriber:
         except Exception as error:  # pragma: no cover - hardware/runtime dependent
             raise WhisperTranscriberError(f"Whisper warmup failed: {error}") from error
 
-    def transcribe(self, audio: np.ndarray) -> dict[str, object]:
+    def transcribe(self, audio: NDArray[np.float32]) -> TranscriptionResult:
         normalized_audio = np.asarray(audio, dtype=np.float32).reshape(-1)
         start = time.time()
         full_text: list[str] = []
