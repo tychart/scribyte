@@ -20,15 +20,16 @@ from app.services.recorder_devices import list_wasapi_input_devices as list_shar
 Use it like this:
 
 List WASAPI inputs:
-uv run python wasapi_debug.py --list
+uv run python scripts/wasapi_debug.py --list
 Record 5 seconds from the default-matching WASAPI mic:
-uv run python wasapi_debug.py
+uv run python scripts/wasapi_debug.py
 Record from a specific WASAPI device:
-uv run python wasapi_debug.py --device-index 14 --seconds 8
+uv run python scripts/wasapi_debug.py --device-index 14 --seconds 8
 """
 
 TARGET_SAMPLE_RATE = 16000
 OUTPUT_DIR = Path(tempfile.gettempdir()) / "scribyte-wasapi-debug"
+
 
 def list_wasapi_input_devices() -> list[WasapiInputDevice]:
     return list_wasapi_input_devices_for_debug()

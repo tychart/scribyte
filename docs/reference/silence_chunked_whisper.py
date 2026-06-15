@@ -8,7 +8,7 @@ import openvino_genai as ov_genai
 MODEL_PATH = "whisper_base_ov"
 SAMPLE_RATE = 16000
 
-# Maximum chunk duration — chunks always break at silence, but never exceed this
+# Maximum chunk duration - chunks always break at silence, but never exceed this
 MAX_CHUNK_SECONDS = 30
 
 # Silence detection tuning:

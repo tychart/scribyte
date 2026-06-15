@@ -71,7 +71,7 @@ print(core.available_devices)
 Run it with:
 
 ```powershell
-uv run python check_device.py
+uv run python scripts/check_device.py
 ```
 
 On a machine with the Intel NPU exposed correctly, you should see `NPU` in the output.
@@ -84,7 +84,7 @@ On a machine with the Intel NPU exposed correctly, you should see `NPU` in the o
 
 ## Current reference script
 
-The current working transcription reference is `silence_chunked_whisper.py`.
+The current working transcription reference is `docs/reference/silence_chunked_whisper.py`.
 
 It proves:
 
@@ -109,7 +109,7 @@ Architecture split:
 
 ## FastAPI project structure
 
-The backend follows FastAPI's recommended bigger-application layout, with a package entrypoint, routers, and service modules:
+The backend follows FastAPI's recommended bigger-application layout, with the API code isolated under `app/` and non-production utilities separated out:
 
 ```text
 app/
@@ -131,6 +131,12 @@ app/
 		__init__.py
 		recorder.py
 		transcriber.py
+scripts/
+	check_device.py
+	wasapi_debug.py
+docs/
+	reference/
+		silence_chunked_whisper.py
 tests/
 	test_api.py
 ```
@@ -142,6 +148,8 @@ Why this shape:
 - `app/services/` holds recorder and transcription logic outside of HTTP handlers.
 - `app/schemas/` holds request and response models.
 - `app/dependencies.py` centralizes shared FastAPI dependency helpers.
+- `scripts/` holds local developer and hardware-debug utilities that are not part of the API package.
+- `docs/reference/` holds prototype/reference code that should not be mistaken for live application code.
 
 ## Run the API
 
@@ -155,6 +163,12 @@ Or directly with Uvicorn:
 
 ```powershell
 uv run python -m app.main
+```
+
+For local hardware diagnostics:
+
+```powershell
+uv run python scripts/wasapi_debug.py --list
 ```
 
 ## AutoHotkey v2 script

@@ -79,9 +79,12 @@ tests/
   test-audio/
     sample1.wav
     sample1.txt
-main.py
-check_device.py
-silence_chunked_whisper.py
+scripts/
+  check_device.py
+  wasapi_debug.py
+docs/
+  reference/
+    silence_chunked_whisper.py
 README.md
 pyproject.toml
 AGENTS.md
@@ -91,7 +94,7 @@ AGENTS.md
 
 ### Source of Truth
 
-- `silence_chunked_whisper.py`
+- `docs/reference/silence_chunked_whisper.py`
   - Original working script.
   - Use this as the behavioral source of truth for chunking and OpenVINO Whisper usage.
 

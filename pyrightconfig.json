@@ -3,11 +3,8 @@
   "include": [
     "app",
     "tests",
-    "check_device.py",
-    "main.py",
-    "recorder.py",
-    "silence_chunked_whisper.py",
-    "transcriber.py"
+    "scripts",
+    "docs/reference"
   ],
   "exclude": [
     ".venv",
