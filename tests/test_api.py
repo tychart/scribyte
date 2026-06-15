@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.main import create_app
-from app.services.recorder import RecorderStateError, pick_input_device, pick_input_devices, prepare_audio
+from app.services.recorder import RecorderStateError, pick_wasapi_input_device, pick_wasapi_input_devices, prepare_audio
 from app.services.transcriber import TranscriptionResult
 
 
@@ -100,7 +100,7 @@ def test_recording_flow_round_trip() -> None:
     assert stop_response.json()["debug_audio_path"].endswith(".wav")
 
 
-def test_pick_input_device_prefers_matching_wasapi() -> None:
+def test_pick_wasapi_input_device_prefers_matching_wasapi() -> None:
     default_device = {
         "name": "Surface Stereo Microphones (5- ",
         "index": 1,
@@ -120,14 +120,15 @@ def test_pick_input_device_prefers_matching_wasapi() -> None:
     ]
     hostapi_names = {0: "MME", 2: "Windows WASAPI"}
 
-    selection = pick_input_device(default_device, all_devices, hostapi_names, 16000)
+    selection = pick_wasapi_input_device(default_device, all_devices, hostapi_names, 16000)
 
+    assert selection is not None
     assert selection.index == 14
     assert selection.name == "Surface Stereo Microphones (5- SoundWire Audio) [Windows WASAPI]"
     assert selection.sample_rate == 48000
 
 
-def test_pick_input_devices_includes_fallback_order() -> None:
+def test_pick_wasapi_input_devices_filters_non_wasapi_backends() -> None:
     default_device = {
         "name": "Surface Stereo Microphones (5- ",
         "index": 1,
@@ -154,9 +155,34 @@ def test_pick_input_devices_includes_fallback_order() -> None:
     ]
     hostapi_names = {0: "MME", 1: "Windows DirectSound", 2: "Windows WASAPI"}
 
-    selections = pick_input_devices(default_device, all_devices, hostapi_names, 16000)
+    selections = pick_wasapi_input_devices(default_device, all_devices, hostapi_names, 16000)
 
-    assert [selection.index for selection in selections] == [14, 7, 1]
+    assert [selection.index for selection in selections] == [14]
+
+
+def test_pick_wasapi_input_device_returns_none_without_wasapi() -> None:
+    default_device = {
+        "name": "Surface Stereo Microphones (5- ",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 2,
+        "default_samplerate": 44100.0,
+    }
+    all_devices = [
+        default_device,
+        {
+            "name": "Surface Stereo Microphones (5- SoundWire Audio)",
+            "index": 7,
+            "hostapi": 1,
+            "max_input_channels": 2,
+            "default_samplerate": 44100.0,
+        },
+    ]
+    hostapi_names = {0: "MME", 1: "Windows DirectSound"}
+
+    selection = pick_wasapi_input_device(default_device, all_devices, hostapi_names, 16000)
+
+    assert selection is None
 
 
 def test_prepare_audio_resamples_and_removes_dc_offset() -> None:

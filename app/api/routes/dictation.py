@@ -1,5 +1,6 @@
 from typing import Annotated
 
+from anyio import to_thread
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import DEBUG_RECORDINGS_DIR
@@ -30,7 +31,7 @@ def get_status(
 
 
 @router.post("/start_recording", response_model=StartRecordingResponse)
-def start_recording(
+async def start_recording(
     recorder_state: Annotated[RecorderState, Depends(get_recorder_state)],
     active_transcriber: Annotated[WhisperTranscriber, Depends(get_transcriber)],
 ) -> StartRecordingResponse:
@@ -48,7 +49,7 @@ def start_recording(
 
 
 @router.post("/stop_recording_and_transcribe", response_model=TranscriptionResponse)
-def stop_recording_and_transcribe(
+async def stop_recording_and_transcribe(
     recorder_state: Annotated[RecorderState, Depends(get_recorder_state)],
     active_transcriber: Annotated[WhisperTranscriber, Depends(get_transcriber)],
 ) -> TranscriptionResponse:
@@ -64,7 +65,7 @@ def stop_recording_and_transcribe(
     debug_audio_path = save_debug_recording(audio, active_transcriber.sample_rate)
 
     try:
-        result = active_transcriber.transcribe(audio)
+        result = await to_thread.run_sync(active_transcriber.transcribe, audio)
     except WhisperTranscriberError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
