@@ -13,6 +13,7 @@ Newer Python versions can break parts of the OpenVINO and Whisper tooling stack.
 1. Install `uv`.
 2. Install FFmpeg on Windows and add its `bin` directory to `PATH`.
 3. Make sure Intel NPU drivers are installed if you want to run on `NPU`.
+4. Install AutoHotkey v2 if you want the hold-to-talk desktop hotkey.
 
 ## Fresh install
 
@@ -156,6 +157,40 @@ Or directly with Uvicorn:
 uv run python -m app.main
 ```
 
+## AutoHotkey v2 script
+
+The repo now includes `scribyte.ahk`, a local hold-to-talk client for the FastAPI service.
+
+What it does:
+
+- hold a hotkey to call `POST /start_recording`
+- release the hotkey to call `POST /stop_recording_and_transcribe`
+- copy the returned text to the clipboard
+- paste it into the active window with `Ctrl+V`
+- show short on-screen status messages for recording, errors, and backend readiness
+
+Default script settings are at the top of `scribyte.ahk`:
+
+```ahk
+global SCRIBYTE_API_URL := "http://127.0.0.1:8000"
+global SCRIBYTE_HOLD_KEY := "F8"
+global SCRIBYTE_PASTE_SHORTCUT := "^v"
+```
+
+Typical usage:
+
+1. Start the API with `uv run fastapi dev` or `uv run python -m app.main`.
+2. Launch `scribyte.ahk` with AutoHotkey v2.
+3. Focus the target app.
+4. Hold `F8` while speaking, then release it to transcribe and paste.
+
+Notes:
+
+- The script assumes the API is listening on `127.0.0.1:8000`.
+- If you change the backend host or port, update `SCRIBYTE_API_URL` in the script.
+- If `F8` conflicts with something else on your machine, change `SCRIBYTE_HOLD_KEY` to another key name supported by AutoHotkey v2.
+- The tray menu includes a `Check Scribyte Status` action for a quick readiness check.
+
 ## NPU transcription integration test
 
 To separate recorder problems from transcription problems, there is an integration test that loads real audio fixtures and runs them through the actual `WhisperTranscriber` on `NPU`.
@@ -181,4 +216,4 @@ If this test passes but the API still returns output like `"you"` for long dicta
 1. Build the FastAPI app with a persistent `WhisperPipeline` loaded once at startup.
 2. Add microphone recording endpoints.
 3. Reuse the silence-aware chunking logic from the reference script.
-4. Add the AutoHotkey hold-to-talk script.
+4. Manually validate the AutoHotkey hold-to-talk flow against live microphone input.
