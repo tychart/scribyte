@@ -2,8 +2,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.core.config import DEBUG_RECORDINGS_DIR
 from app.dependencies import get_optional_transcriber, get_recorder_state, get_startup_error, get_transcriber
 from app.schemas.dictation import StartRecordingResponse, StatusResponse, TranscriptionResponse
+from app.services.debug_audio import save_debug_recording
 from app.services.recorder import RecorderState, RecorderStateError
 from app.services.transcriber import WhisperTranscriber, WhisperTranscriberError
 
@@ -23,6 +25,7 @@ def get_status(
         recording=recorder_state.is_recording,
         sample_rate=recorder_state.sample_rate,
         startup_error=startup_error,
+        debug_recordings_dir=str(DEBUG_RECORDINGS_DIR),
     )
 
 
@@ -54,9 +57,12 @@ def stop_recording_and_transcribe(
     if duration_seconds < 0.2:
         raise HTTPException(status_code=400, detail="Recording too short to transcribe")
 
+    debug_audio_path = save_debug_recording(audio, active_transcriber.sample_rate)
+
     try:
         result = active_transcriber.transcribe(audio)
     except WhisperTranscriberError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
+    result["debug_audio_path"] = str(debug_audio_path)
     return TranscriptionResponse.model_validate(result)

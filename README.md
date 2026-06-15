@@ -156,6 +156,26 @@ Or directly with Uvicorn:
 uv run python -m app.main
 ```
 
+## NPU transcription integration test
+
+To separate recorder problems from transcription problems, there is an integration test that loads real audio fixtures and runs them through the actual `WhisperTranscriber` on `NPU`.
+
+Fixture convention:
+
+- put WAV fixtures in `tests/test-audio/`
+- add a matching `.txt` file with the expected transcription
+- example: `sample1.wav` and `sample1.txt`
+
+The expected text does not need to match punctuation exactly; the test normalizes casing and punctuation before comparing.
+
+Run just the NPU integration test with:
+
+```powershell
+uv run pytest -m npu tests/test_npu_transcription.py -rs
+```
+
+If this test passes but the API still returns output like `"you"` for long dictation, the problem is likely in the recording path or the captured microphone audio rather than the NPU transcription pipeline itself.
+
 ## Next implementation steps
 
 1. Build the FastAPI app with a persistent `WhisperPipeline` loaded once at startup.

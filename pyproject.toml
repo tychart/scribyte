@@ -30,3 +30,8 @@ model-export = [
 
 [tool.fastapi]
 entrypoint = "app.main:app"
+
+[tool.pytest.ini_options]
+markers = [
+	"npu: integration tests that require a local NPU, exported Whisper model, and reference audio",
+]

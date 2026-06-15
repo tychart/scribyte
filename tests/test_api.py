@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+import tempfile
 
 import numpy as np
 from fastapi.testclient import TestClient
@@ -51,6 +52,7 @@ def test_status_reports_ready() -> None:
 
     assert response.status_code == 200
     assert response.json()["ready"] is True
+    assert response.json()["debug_recordings_dir"] == str(Path(tempfile.gettempdir()) / "scribyte-debug-recordings")
 
 
 def test_recording_flow_round_trip() -> None:
@@ -63,6 +65,7 @@ def test_recording_flow_round_trip() -> None:
     assert start_response.status_code == 200
     assert stop_response.status_code == 200
     assert stop_response.json()["text"] == "samples=16000"
+    assert stop_response.json()["debug_audio_path"].endswith(".wav")
 
 
 def test_double_start_returns_conflict() -> None:
