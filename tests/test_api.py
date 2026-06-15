@@ -31,8 +31,12 @@ class FakeRecorder:
     def __init__(self, audio: NDArray[np.float32] | None = None):
         self.sample_rate = 16000
         self.is_recording = False
-        self.input_device = "Test Microphone"
+        self._input_device = "Test Microphone"
         self.audio = audio if audio is not None else np.ones(16000, dtype=np.float32)
+
+    @property
+    def input_device(self) -> str | None:
+        return self._input_device
 
     def start(self) -> None:
         if self.is_recording:

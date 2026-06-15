@@ -13,8 +13,11 @@ class RecorderStateError(RuntimeError):
 
 class Recorder(Protocol):
     sample_rate: int
-    is_recording: bool
-    input_device: str | None
+    @property
+    def is_recording(self) -> bool: ...
+
+    @property
+    def input_device(self) -> str | None: ...
 
     def start(self) -> None: ...
 
@@ -50,7 +53,8 @@ class RecorderState:
             return None
 
         if isinstance(device_info, dict):
-            device_name = device_info.get("name")
+            typed_device_info = cast(dict[str, object], device_info)
+            device_name = typed_device_info.get("name")
             return device_name if isinstance(device_name, str) else None
 
         return None

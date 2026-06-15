@@ -43,8 +43,10 @@ The following checks have already succeeded during implementation:
 
 1. `uv lock`
 2. Python compile checks for the FastAPI package and tests
-3. `uv run pytest tests/test_api.py`
-4. `uv run pytest -m npu tests/test_npu_transcription.py -rs`
+3. `uv run pyright`
+4. `uv run pytest`
+5. `uv run pytest tests/test_api.py`
+6. `uv run pytest -m npu tests/test_npu_transcription.py -rs`
 
 That means the NPU transcription path works on at least one known-good fixture and the current likely fault boundary for bad live dictation is the microphone capture path, not the Whisper NPU path itself.
 
@@ -250,9 +252,15 @@ Fixture convention:
 Recommended commands:
 
 ```powershell
+uv run pyright
+uv run pytest
 uv run pytest tests/test_api.py
 uv run pytest -m npu tests/test_npu_transcription.py -rs
 ```
+
+Validation rule:
+
+- After every code change, run `uv run pyright` and the normal `uv run pytest` suite before considering the work complete.
 
 ## Known Findings
 
@@ -340,6 +348,8 @@ Do not prioritize these until the hold-to-talk path is stable:
 2. Keep audio capture in Python, not in AHK.
 3. Reuse the silence-aware chunking behavior from the original working script unless there is a deliberate, tested reason to change it.
 4. Validate narrow behavior after edits:
+  - `uv run pyright`
+  - `uv run pytest`
    - compile checks for touched modules
    - hardware-free tests for API behavior
    - NPU fixture test when touching transcription behavior
