@@ -39,8 +39,10 @@ uv sync --group dev
 Export the base Whisper model into the local `whisper_base_ov` directory:
 
 ```powershell
-uv run optimum-cli export openvino --model openai/whisper-base whisper_base_ov
+uv run --group model-export optimum-cli export openvino --model openai/whisper-base whisper_base_ov
 ```
+
+`optimum-cli` is exposed by the `optimum` dependency that comes in through `optimum-intel` in the `model-export` group. It is not a package you add directly with `uv add optimum-cli`.
 
 Expected output is a folder like:
 
