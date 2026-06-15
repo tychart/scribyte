@@ -40,7 +40,11 @@ def start_recording(
     except RecorderStateError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
-    return StartRecordingResponse(recording=True, sample_rate=recorder_state.sample_rate)
+    return StartRecordingResponse(
+        recording=True,
+        sample_rate=recorder_state.sample_rate,
+        input_device=recorder_state.input_device,
+    )
 
 
 @router.post("/stop_recording_and_transcribe", response_model=TranscriptionResponse)

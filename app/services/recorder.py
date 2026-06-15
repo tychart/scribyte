@@ -1,6 +1,6 @@
 import threading
 import time
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -14,6 +14,7 @@ class RecorderStateError(RuntimeError):
 class Recorder(Protocol):
     sample_rate: int
     is_recording: bool
+    input_device: str | None
 
     def start(self) -> None: ...
 
@@ -28,10 +29,31 @@ class RecorderState:
         self._chunks: list[NDArray[np.float32]] = []
         self._stream: sd.InputStream | None = None
         self._started_at: float | None = None
+        self._input_device: str | None = None
 
     @property
     def is_recording(self) -> bool:
         return self._stream is not None
+
+    @property
+    def input_device(self) -> str | None:
+        return self._input_device
+
+    def _resolve_input_device(self) -> str | None:
+        query_devices = cast(Any, getattr(sd, "query_devices", None))
+        if query_devices is None:
+            return None
+
+        try:
+            device_info = cast(object, query_devices(kind="input"))
+        except Exception:
+            return None
+
+        if isinstance(device_info, dict):
+            device_name = device_info.get("name")
+            return device_name if isinstance(device_name, str) else None
+
+        return None
 
     def _callback(
         self,
@@ -54,6 +76,7 @@ class RecorderState:
 
             self._chunks = []
             self._started_at = time.time()
+            self._input_device = self._resolve_input_device()
             self._stream = sd.InputStream(
                 samplerate=self.sample_rate,
                 channels=self.channels,
@@ -75,9 +98,11 @@ class RecorderState:
 
         with self._lock:
             if not self._chunks:
+                self._input_device = None
                 return np.array([], dtype=np.float32)
 
             audio = np.concatenate(self._chunks).astype(np.float32, copy=False)
             self._chunks = []
             self._started_at = None
+            self._input_device = None
             return audio

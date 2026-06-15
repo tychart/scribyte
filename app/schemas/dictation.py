@@ -14,6 +14,7 @@ class StatusResponse(BaseModel):
 class StartRecordingResponse(BaseModel):
     recording: bool
     sample_rate: int
+    input_device: str | None = None
 
 
 class TranscriptionResponse(BaseModel):

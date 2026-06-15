@@ -31,6 +31,7 @@ class FakeRecorder:
     def __init__(self, audio: NDArray[np.float32] | None = None):
         self.sample_rate = 16000
         self.is_recording = False
+        self.input_device = "Test Microphone"
         self.audio = audio if audio is not None else np.ones(16000, dtype=np.float32)
 
     def start(self) -> None:
@@ -89,6 +90,7 @@ def test_recording_flow_round_trip() -> None:
     start_response, stop_response = asyncio.run(run_test())
 
     assert start_response.status_code == 200
+    assert start_response.json()["input_device"] == "Test Microphone"
     assert stop_response.status_code == 200
     assert stop_response.json()["text"] == "samples=16000"
     assert stop_response.json()["debug_audio_path"].endswith(".wav")
