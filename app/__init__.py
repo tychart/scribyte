@@ -1,0 +1,1 @@
+"""Scribyte FastAPI application package."""

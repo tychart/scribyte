@@ -104,6 +104,56 @@ Architecture split:
 - Python / FastAPI: audio capture, persistent Whisper model, transcription
 - AutoHotkey v2: hotkeys, toasts, API calls, paste
 
+## FastAPI project structure
+
+The backend follows FastAPI's recommended bigger-application layout, with a package entrypoint, routers, and service modules:
+
+```text
+app/
+	__init__.py
+	main.py
+	dependencies.py
+	api/
+		__init__.py
+		routes/
+			__init__.py
+			dictation.py
+	core/
+		__init__.py
+		config.py
+	schemas/
+		__init__.py
+		dictation.py
+	services/
+		__init__.py
+		recorder.py
+		transcriber.py
+tests/
+	test_api.py
+```
+
+Why this shape:
+
+- `app/main.py` keeps the actual `FastAPI` application factory and lifespan wiring small.
+- `app/api/routes/` holds HTTP routes through `APIRouter`.
+- `app/services/` holds recorder and transcription logic outside of HTTP handlers.
+- `app/schemas/` holds request and response models.
+- `app/dependencies.py` centralizes shared FastAPI dependency helpers.
+
+## Run the API
+
+With the FastAPI entrypoint configured in `pyproject.toml`, you can run the service with:
+
+```powershell
+uv run fastapi dev
+```
+
+Or directly with Uvicorn:
+
+```powershell
+uv run python -m app.main
+```
+
 ## Next implementation steps
 
 1. Build the FastAPI app with a persistent `WhisperPipeline` loaded once at startup.

@@ -6,8 +6,8 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from main import create_app
-from recorder import RecorderStateError
+from app.main import create_app
+from app.services.recorder import RecorderStateError
 
 
 class FakeRecorder:
