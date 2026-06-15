@@ -1,6 +1,8 @@
-import numpy as np
 import librosa
+import numpy as np
+from numpy.typing import NDArray
 import time
+from typing import Iterator, SupportsFloat
 import openvino_genai as ov_genai
 
 MODEL_PATH = "whisper_base_ov"
@@ -18,7 +20,14 @@ MIN_SILENCE_SECONDS = 0.3
 audio, _ = librosa.load("sample2.wav", sr=SAMPLE_RATE)
 
 
-def silence_aware_chunks(audio, max_chunk_seconds=MAX_CHUNK_SECONDS):
+def _to_audio_sequence(audio_chunk: NDArray[np.float32]) -> list[SupportsFloat]:
+    return audio_chunk.astype(np.float32, copy=False).tolist()
+
+
+def silence_aware_chunks(
+    audio: NDArray[np.float32],
+    max_chunk_seconds: int = MAX_CHUNK_SECONDS,
+) -> Iterator[NDArray[np.float32]]:
     """
     Split audio into chunks at silence boundaries, never exceeding max_chunk_seconds.
     Uses librosa to detect non-silent intervals, then groups them greedily.
@@ -49,8 +58,7 @@ def silence_aware_chunks(audio, max_chunk_seconds=MAX_CHUNK_SECONDS):
     chunk_start = merged[0][0]
     chunk_end = merged[0][1]
 
-    for i in range(1, len(merged)):
-        interval_start, interval_end = merged[i]
+    for interval_start, interval_end in merged[1:]:
 
         # Would adding this interval exceed the max chunk size?
         if interval_end - chunk_start > max_chunk_samples:
@@ -64,12 +72,12 @@ def silence_aware_chunks(audio, max_chunk_seconds=MAX_CHUNK_SECONDS):
     yield audio[chunk_start:chunk_end]
 
 
-def run(device):
+def run(device: str) -> None:
     print(f"\n--- Running on {device} ---")
     pipe = ov_genai.WhisperPipeline(MODEL_PATH, device)
 
     start = time.time()
-    full_text = []
+    full_text: list[str] = []
 
     chunk_count = 0
     for chunk in silence_aware_chunks(audio):
@@ -78,7 +86,7 @@ def run(device):
             continue
 
         chunk_count += 1
-        result = pipe.generate(chunk, language="<|en|>")
+        result = pipe.generate(_to_audio_sequence(chunk), language="<|en|>")
         text = result.texts[0].strip()
         full_text.append(text)
         print(f"  Chunk {chunk_count} ({duration:.1f}s): {text[:60]}...")

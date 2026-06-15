@@ -1,5 +1,5 @@
 import time
-from typing import Iterator, TypedDict
+from typing import Iterator, Protocol, SupportsFloat, TypedDict
 
 import librosa
 import numpy as np
@@ -26,6 +26,20 @@ class TranscriptionResult(TypedDict):
     chunk_count: int
     duration_seconds: float
     latency_seconds: float
+
+
+class Transcriber(Protocol):
+    device: str
+    model_path: str
+    sample_rate: int
+
+    def warmup(self) -> None: ...
+
+    def transcribe(self, audio: NDArray[np.float32]) -> TranscriptionResult: ...
+
+
+def _to_audio_sequence(audio: NDArray[np.float32]) -> list[SupportsFloat]:
+    return audio.astype(np.float32, copy=False).tolist()
 
 
 def silence_aware_chunks(
@@ -77,7 +91,7 @@ class WhisperTranscriber:
     def warmup(self) -> None:
         silence = np.zeros(self.sample_rate, dtype=np.float32)
         try:
-            self.pipeline.generate(silence, language=LANGUAGE)
+            self.pipeline.generate(_to_audio_sequence(silence), language=LANGUAGE)
         except Exception as error:  # pragma: no cover - hardware/runtime dependent
             raise WhisperTranscriberError(f"Whisper warmup failed: {error}") from error
 
@@ -93,7 +107,7 @@ class WhisperTranscriber:
                 continue
 
             try:
-                result = self.pipeline.generate(chunk, language=LANGUAGE)
+                result = self.pipeline.generate(_to_audio_sequence(chunk), language=LANGUAGE)
             except Exception as error:  # pragma: no cover - hardware/runtime dependent
                 raise WhisperTranscriberError(f"Chunk transcription failed: {error}") from error
 

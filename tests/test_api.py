@@ -1,28 +1,34 @@
 import asyncio
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 import tempfile
 
+from fastapi import FastAPI
 import httpx
 import numpy as np
+from numpy.typing import NDArray
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.main import create_app
 from app.services.recorder import RecorderStateError
+from app.services.transcriber import TranscriptionResult
 
 
 @asynccontextmanager
-async def make_test_client(app):
-    async with app.router.lifespan_context(app):
+async def make_test_client(app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
+    lifespan_context = app.router.lifespan_context
+    typed_lifespan = lifespan_context
+    async with typed_lifespan(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             yield client
 
 
 class FakeRecorder:
-    def __init__(self, audio: np.ndarray | None = None):
+    def __init__(self, audio: NDArray[np.float32] | None = None):
         self.sample_rate = 16000
         self.is_recording = False
         self.audio = audio if audio is not None else np.ones(16000, dtype=np.float32)
@@ -32,7 +38,7 @@ class FakeRecorder:
             raise RecorderStateError("Recording is already in progress")
         self.is_recording = True
 
-    def stop(self) -> np.ndarray:
+    def stop(self) -> NDArray[np.float32]:
         if not self.is_recording:
             raise RecorderStateError("Recording is not currently running")
         self.is_recording = False
@@ -45,7 +51,10 @@ class FakeTranscriber:
         self.model_path = "whisper_base_ov"
         self.sample_rate = 16000
 
-    def transcribe(self, audio: np.ndarray) -> dict[str, object]:
+    def warmup(self) -> None:
+        return None
+
+    def transcribe(self, audio: NDArray[np.float32]) -> TranscriptionResult:
         return {
             "text": f"samples={len(audio)}",
             "chunk_count": 1,

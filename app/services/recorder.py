@@ -1,7 +1,9 @@
 import threading
 import time
+from typing import Protocol
 
 import numpy as np
+from numpy.typing import NDArray
 import sounddevice as sd
 
 
@@ -9,12 +11,21 @@ class RecorderStateError(RuntimeError):
     pass
 
 
+class Recorder(Protocol):
+    sample_rate: int
+    is_recording: bool
+
+    def start(self) -> None: ...
+
+    def stop(self) -> NDArray[np.float32]: ...
+
+
 class RecorderState:
     def __init__(self, sample_rate: int, channels: int = 1):
         self.sample_rate = sample_rate
         self.channels = channels
         self._lock = threading.RLock()
-        self._chunks: list[np.ndarray] = []
+        self._chunks: list[NDArray[np.float32]] = []
         self._stream: sd.InputStream | None = None
         self._started_at: float | None = None
 
@@ -22,12 +33,19 @@ class RecorderState:
     def is_recording(self) -> bool:
         return self._stream is not None
 
-    def _callback(self, indata, frames, time_info, status) -> None:
+    def _callback(
+        self,
+        indata: NDArray[np.float32],
+        frames: int,
+        time_info: object,
+        status: sd.CallbackFlags,
+    ) -> None:
         del frames, time_info
         if status:
             return
         with self._lock:
-            self._chunks.append(indata.copy().reshape(-1))
+            chunk = np.asarray(indata, dtype=np.float32).reshape(-1)
+            self._chunks.append(chunk)
 
     def start(self) -> None:
         with self._lock:
@@ -44,7 +62,7 @@ class RecorderState:
             )
             self._stream.start()
 
-    def stop(self) -> np.ndarray:
+    def stop(self) -> NDArray[np.float32]:
         with self._lock:
             if self._stream is None:
                 raise RecorderStateError("Recording is not currently running")

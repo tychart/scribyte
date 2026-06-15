@@ -3,12 +3,13 @@ from pathlib import Path
 from uuid import uuid4
 
 import numpy as np
+from numpy.typing import NDArray
 import soundfile as sf
 
 from app.core.config import DEBUG_RECORDINGS_DIR
 
 
-def save_debug_recording(audio: np.ndarray, sample_rate: int) -> Path:
+def save_debug_recording(audio: NDArray[np.float32], sample_rate: int) -> Path:
     DEBUG_RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     file_path = DEBUG_RECORDINGS_DIR / f"recording-{timestamp}-{uuid4().hex[:8]}.wav"

@@ -64,5 +64,4 @@ def stop_recording_and_transcribe(
     except WhisperTranscriberError as error:
         raise HTTPException(status_code=500, detail=str(error)) from error
 
-    result["debug_audio_path"] = str(debug_audio_path)
-    return TranscriptionResponse.model_validate(result)
+    return TranscriptionResponse.model_validate({**result, "debug_audio_path": str(debug_audio_path)})

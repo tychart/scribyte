@@ -5,13 +5,13 @@ import uvicorn
 
 from app.api.routes.dictation import router as dictation_router
 from app.core.config import API_DESCRIPTION, API_TITLE, API_VERSION, MODEL_PATH, SAMPLE_RATE
-from app.services.recorder import RecorderState, RecorderStateError
-from app.services.transcriber import WhisperTranscriber, WhisperTranscriberError
+from app.services.recorder import Recorder, RecorderState, RecorderStateError
+from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTranscriberError
 
 
 def create_app(
-    transcriber: WhisperTranscriber | None = None,
-    recorder: RecorderState | None = None,
+    transcriber: Transcriber | None = None,
+    recorder: Recorder | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
