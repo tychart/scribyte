@@ -53,33 +53,43 @@ git clone <your-repo-url>
 cd scribyte
 ```
 
-### 3. Install Python 3.11 and sync dependencies
+### 3. Sync the project environment
 
 ```powershell
-uv python install 3.11
 uv sync
 uv sync --group dev
 uv sync --group model-export
 ```
 
-If you prefer to recreate the environment explicitly first:
+What those commands mean:
+
+- `uv sync`: installs the runtime environment for this project and uses the repo's pinned Python version.
+- `uv sync --group dev`: also installs the development tools, including `pytest`, `pyright`, and `httpx`.
+- `uv sync --group model-export`: also installs the heavier model-export toolchain used to generate `whisper_base_ov` locally if it dosn't already exist.
+
+In most cases, users do not need to install Python separately first. UV can download and manage the pinned interpreter automatically.
+
+You would only need an explicit Python install first if UV-managed Python downloads are disabled in your environment, or if you are working offline.
+
+If you want to install the interpreter explicitly anyway, you can still do:
 
 ```powershell
+uv python install 3.11
 uv venv --python 3.11
 uv sync
-uv sync --group dev
-uv sync --group model-export
 ```
 
 ### 4. Make sure the Whisper OpenVINO model exists
 
 This repo expects a local exported model directory named `whisper_base_ov`.
 
-If you do not already have it, generate it by running the following command on the project's root directory:
+If you do not already have it (likely), generate it by running the following command on the project's root directory:
 
 ```powershell
 uv run --group model-export optimum-cli export openvino --model openai/whisper-base whisper_base_ov
 ```
+
+This will pull down the openai whisper model from hugging face and convert the format to something that can be run by an NPU.
 
 Expected output is a folder named `whisper_base_ov` containing files such as:
 
