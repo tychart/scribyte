@@ -13,6 +13,7 @@ class InputStream:
         self,
         *,
         samplerate: int,
+        device: int | None = ...,
         channels: int,
         dtype: str,
         callback: Callable[[NDArray[np.float32], int, object, CallbackFlags], None],

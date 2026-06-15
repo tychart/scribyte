@@ -13,7 +13,7 @@ from numpy.typing import NDArray
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.main import create_app
-from app.services.recorder import RecorderStateError
+from app.services.recorder import RecorderStateError, pick_input_device, pick_input_devices, prepare_audio
 from app.services.transcriber import TranscriptionResult
 
 
@@ -31,7 +31,7 @@ class FakeRecorder:
     def __init__(self, audio: NDArray[np.float32] | None = None):
         self.sample_rate = 16000
         self.is_recording = False
-        self._input_device = "Test Microphone"
+        self._input_device = "Test Microphone [Windows WASAPI]"
         self.audio = audio if audio is not None else np.ones(16000, dtype=np.float32)
 
     @property
@@ -94,10 +94,83 @@ def test_recording_flow_round_trip() -> None:
     start_response, stop_response = asyncio.run(run_test())
 
     assert start_response.status_code == 200
-    assert start_response.json()["input_device"] == "Test Microphone"
+    assert start_response.json()["input_device"] == "Test Microphone [Windows WASAPI]"
     assert stop_response.status_code == 200
     assert stop_response.json()["text"] == "samples=16000"
     assert stop_response.json()["debug_audio_path"].endswith(".wav")
+
+
+def test_pick_input_device_prefers_matching_wasapi() -> None:
+    default_device = {
+        "name": "Surface Stereo Microphones (5- ",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 2,
+        "default_samplerate": 44100.0,
+    }
+    all_devices = [
+        default_device,
+        {
+            "name": "Surface Stereo Microphones (5- SoundWire Audio)",
+            "index": 14,
+            "hostapi": 2,
+            "max_input_channels": 2,
+            "default_samplerate": 48000.0,
+        },
+    ]
+    hostapi_names = {0: "MME", 2: "Windows WASAPI"}
+
+    selection = pick_input_device(default_device, all_devices, hostapi_names, 16000)
+
+    assert selection.index == 14
+    assert selection.name == "Surface Stereo Microphones (5- SoundWire Audio) [Windows WASAPI]"
+    assert selection.sample_rate == 48000
+
+
+def test_pick_input_devices_includes_fallback_order() -> None:
+    default_device = {
+        "name": "Surface Stereo Microphones (5- ",
+        "index": 1,
+        "hostapi": 0,
+        "max_input_channels": 2,
+        "default_samplerate": 44100.0,
+    }
+    all_devices = [
+        default_device,
+        {
+            "name": "Surface Stereo Microphones (5- SoundWire Audio)",
+            "index": 7,
+            "hostapi": 1,
+            "max_input_channels": 2,
+            "default_samplerate": 44100.0,
+        },
+        {
+            "name": "Surface Stereo Microphones (5- SoundWire Audio)",
+            "index": 14,
+            "hostapi": 2,
+            "max_input_channels": 2,
+            "default_samplerate": 48000.0,
+        },
+    ]
+    hostapi_names = {0: "MME", 1: "Windows DirectSound", 2: "Windows WASAPI"}
+
+    selections = pick_input_devices(default_device, all_devices, hostapi_names, 16000)
+
+    assert [selection.index for selection in selections] == [14, 7, 1]
+
+
+def test_prepare_audio_resamples_and_removes_dc_offset() -> None:
+    duration_seconds = 0.25
+    source_sample_rate = 48000
+    target_sample_rate = 16000
+    samples = int(duration_seconds * source_sample_rate)
+    time_axis = np.arange(samples, dtype=np.float32) / np.float32(source_sample_rate)
+    audio = 0.2 * np.sin(2 * np.pi * 220 * time_axis).astype(np.float32) + np.float32(0.05)
+
+    prepared = prepare_audio(audio, source_sample_rate, target_sample_rate)
+
+    assert abs(float(np.mean(prepared))) < 1e-3
+    assert abs(len(prepared) - int(duration_seconds * target_sample_rate)) <= 2
 
 
 def test_double_start_returns_conflict() -> None:
