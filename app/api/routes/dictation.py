@@ -4,7 +4,7 @@ from anyio import to_thread
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.config import DEBUG_RECORDINGS_DIR
-from app.dependencies import get_optional_transcriber, get_recorder_state, get_startup_error, get_transcriber
+from app.dependencies import get_optional_transcriber, get_recorder_state, get_startup_error, get_transcriber, get_startup_log
 from app.schemas.dictation import StartRecordingResponse, StatusResponse, TranscriptionResponse
 from app.services.debug_audio import save_debug_recording
 from app.services.recorder import RecorderState, RecorderStateError
@@ -18,6 +18,7 @@ def get_status(
     recorder_state: Annotated[RecorderState, Depends(get_recorder_state)],
     active_transcriber: Annotated[WhisperTranscriber | None, Depends(get_optional_transcriber)],
     startup_error: Annotated[str | None, Depends(get_startup_error)],
+    startup_log: Annotated[list[str] | None, Depends(get_startup_log)],
 ) -> StatusResponse:
     return StatusResponse(
         ready=active_transcriber is not None and startup_error is None,
@@ -26,6 +27,7 @@ def get_status(
         recording=recorder_state.is_recording,
         sample_rate=recorder_state.sample_rate,
         startup_error=startup_error,
+        startup_log=startup_log,
         debug_recordings_dir=str(DEBUG_RECORDINGS_DIR),
     )
 

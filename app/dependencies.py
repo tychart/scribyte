@@ -17,6 +17,10 @@ def get_startup_error(request: Request) -> str | None:
     return getattr(request.app.state, "startup_error", None)
 
 
+def get_startup_log(request: Request) -> list[str] | None:
+    return getattr(request.app.state, "startup_log", None)
+
+
 def get_transcriber(request: Request) -> WhisperTranscriber:
     transcriber = get_optional_transcriber(request)
     if transcriber is None:

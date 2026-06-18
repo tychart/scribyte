@@ -8,6 +8,7 @@ class StatusResponse(BaseModel):
     recording: bool
     sample_rate: int
     startup_error: str | None = None
+    startup_log: list[str] | None = None
     debug_recordings_dir: str | None = None
 
 

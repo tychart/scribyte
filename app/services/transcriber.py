@@ -77,16 +77,59 @@ def silence_aware_chunks(
 
 
 class WhisperTranscriber:
-    def __init__(self, model_path: str = MODEL_PATH, device: str = "NPU"):
+    def __init__(self, model_path: str = MODEL_PATH, device: str = "NPU", allow_fallback: bool = True):
         self.model_path = model_path
         self.device = device
         self.sample_rate = SAMPLE_RATE
-        try:
-            self.pipeline = ov_genai.WhisperPipeline(model_path, device)
-        except Exception as error:  # pragma: no cover - hardware/runtime dependent
+
+        # Normalize device order and apply fallback if enabled.
+        def _order_from_requested(req: str) -> list[str]:
+            req_up = (req or "").upper()
+            if req_up == "NPU":
+                return ["NPU", "GPU", "CPU"]
+            if req_up == "GPU":
+                return ["GPU", "CPU"]
+            return ["CPU"]
+
+        tried: list[tuple[str, Exception | None]] = []
+        last_error: Exception | None = None
+
+        devices_to_try = _order_from_requested(device) if allow_fallback else [device]
+
+        for dev in devices_to_try:
+            try:
+                self.pipeline = ov_genai.WhisperPipeline(model_path, dev)
+                self.device = dev
+                # Determine the runtime-visible device name when possible.
+                try:
+                    from openvino import Core
+
+                    core = Core()
+                    available = list(core.available_devices)
+                    # prefer a device name that contains the requested device token
+                    token = dev.upper()
+                    match = None
+                    for dname in available:
+                        if token in dname.upper():
+                            match = dname
+                            break
+                    if match is None and available:
+                        match = available[0]
+                    self.runtime_device_name = match
+                except Exception:
+                    # best-effort only; don't fail if openvino Core isn't available
+                    self.runtime_device_name = None
+                break
+            except Exception as error:  # pragma: no cover - hardware/runtime dependent
+                last_error = error
+                tried.append((dev, error))
+
+        if not hasattr(self, "pipeline"):
+            # Build a helpful message including attempts
+            attempts = ", ".join(f"{d}: {e}" for d, e in tried)
             raise WhisperTranscriberError(
-                f"Failed to initialize WhisperPipeline for {device}: {error}"
-            ) from error
+                f"Failed to initialize WhisperPipeline for requested device(s) {devices_to_try}. Attempts: {attempts}"
+            ) from last_error
 
     def warmup(self) -> None:
         silence = np.zeros(self.sample_rate, dtype=np.float32)
