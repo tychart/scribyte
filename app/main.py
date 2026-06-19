@@ -44,16 +44,26 @@ def create_app(
 
         if app.state.transcriber is None:
             last_exc: Exception | None = None
+            selected_device: str | None = None
+            runtime_name: str | None = None
             for device in device_order:
+                logger.info("Attempting to initialize transcriber on %s", device)
                 startup_log.append(f"Attempting to initialize transcriber on {device}")
                 try:
                     app.state.transcriber = WhisperTranscriber(model_path=MODEL_PATH, device=device)
                     app.state.transcriber.warmup()
                     runtime_name = getattr(app.state.transcriber, "runtime_device_name", None)
-                    startup_log.append(
-                        f"Initialized transcriber on {device} (runtime device: {runtime_name})"
+                    selected_device = device
+                    logger.info(
+                        "Initialized transcriber on %s (runtime device: %s, model: %s)",
+                        device,
+                        runtime_name,
+                        MODEL_PATH,
                     )
-                    logger.info("Initialized transcriber on %s (%s)", device, runtime_name)
+                    startup_log.append(
+                        f"Initialized transcriber on {device} "
+                        f"(runtime device: {runtime_name}, model: {MODEL_PATH})"
+                    )
                     break
                 except WhisperTranscriberError as error:
                     last_exc = error
@@ -61,8 +71,17 @@ def create_app(
                     startup_log.append(msg)
                     logger.warning(msg)
 
-            if getattr(app.state, "transcriber", None) is None:
+            if selected_device is not None:
+                logger.info(
+                    "Selected transcriber device: %s (runtime: %s)",
+                    selected_device,
+                    runtime_name,
+                )
+                startup_log.append(f"Selected device: {selected_device} (runtime: {runtime_name})")
+            else:
                 app.state.startup_error = str(last_exc) if last_exc is not None else "Unknown transcriber error"
+                logger.error("All device attempts failed. Startup error: %s", app.state.startup_error)
+                startup_log.append(f"Startup error: {app.state.startup_error}")
 
         if app.state.recorder is None:
             sample_rate = SAMPLE_RATE

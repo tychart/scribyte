@@ -35,4 +35,5 @@ entrypoint = "app.main:app"
 [tool.pytest.ini_options]
 markers = [
 	"npu: integration tests that require a local NPU, exported Whisper model, and reference audio",
+	"integration: slow integration tests that require hardware (NPU/GPU/CPU) and exported model. Run with pytest -m integration",
 ]

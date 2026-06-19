@@ -4,8 +4,10 @@ from app.services.recorder_audio import prepare_audio
 from app.services.recorder_contract import InputDeviceSelection, Recorder, RecorderStateError
 from app.services.recorder_devices import build_wasapi_input_devices
 from app.services.recorder_devices import choose_wasapi_input_device
-from app.services.recorder_sounddevice import RecorderState
 from app.services.recorder_devices import device_names_match
+from app.services.recorder_devices import list_input_devices
+from app.services.recorder_devices import pick_input_device
+from app.services.recorder_sounddevice import RecorderState
 
 
 def pick_wasapi_input_devices(
@@ -41,21 +43,15 @@ def pick_input_devices(
     return pick_wasapi_input_devices(default_device, all_devices, hostapi_names, fallback_sample_rate)
 
 
-def pick_input_device(
-    default_device: Mapping[str, object] | None,
-    all_devices: Sequence[Mapping[str, object]],
-    hostapi_names: Mapping[int, str],
-    fallback_sample_rate: int,
-) -> InputDeviceSelection | None:
-    return pick_wasapi_input_device(default_device, all_devices, hostapi_names, fallback_sample_rate)
-
 __all__ = [
     "InputDeviceSelection",
     "Recorder",
     "RecorderState",
     "RecorderStateError",
+    "build_wasapi_input_devices",
     "choose_wasapi_input_device",
     "device_names_match",
+    "list_input_devices",
     "pick_input_device",
     "pick_input_devices",
     "pick_wasapi_input_device",

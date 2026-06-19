@@ -1,3 +1,9 @@
+"""Integration tests for CPU-backed transcription.
+
+These tests run on CPU (slower than NPU/GPU) and require the exported whisper model.
+Run explicitly with: uv run pytest -m integration
+"""
+
 import re
 from pathlib import Path
 import sys
@@ -72,26 +78,26 @@ def _case_id(value: Path | object) -> str:
     return value.name if isinstance(value, Path) else str(value)
 
 
-@pytest.mark.npu
+@pytest.mark.integration
 @pytest.mark.parametrize(
     ("audio_path", "transcript_path"),
     _fixture_cases(),
     ids=_case_id,
 )
-def test_npu_transcription_matches_reference_audio(audio_path: Path, transcript_path: Path) -> None:
+def test_cpu_transcription_matches_reference_audio(audio_path: Path, transcript_path: Path) -> None:
     expected_text = transcript_path.read_text(encoding="utf-8").strip()
     if not expected_text:
         pytest.fail(f"Expected transcript file is empty: {transcript_path}")
 
     audio = _load_fixture_audio(audio_path)
-    transcriber = WhisperTranscriber(device="NPU")
+    transcriber = WhisperTranscriber(device="CPU")
     result = transcriber.transcribe(audio)
 
     actual_text = result["text"]
     normalized_actual = _normalize_text(actual_text)
     normalized_expected = _normalize_text(expected_text)
 
-    assert normalized_actual, "The NPU transcription came back empty"
+    assert normalized_actual, "The CPU transcription came back empty"
 
     expected_tokens = _expected_tokens(expected_text)
     actual_tokens = set(normalized_actual.split())
@@ -99,12 +105,12 @@ def test_npu_transcription_matches_reference_audio(audio_path: Path, transcript_
 
     if normalized_expected not in normalized_actual:
         assert matched_tokens, (
-            "The NPU transcription did not contain the expected phrase or any expected keyword. "
+            "The CPU transcription did not contain the expected phrase or any expected keyword. "
             f"Expected={expected_text!r}, Actual={actual_text!r}"
         )
 
         overlap = len(matched_tokens) / max(len(expected_tokens), 1)
         assert overlap >= 0.5, (
-            "The NPU transcription quality was too far from the expected text. "
+            "The CPU transcription quality was too far from the expected text. "
             f"Fixture={audio_path.name!r}, Expected={expected_text!r}, Actual={actual_text!r}, Overlap={overlap:.2f}"
         )

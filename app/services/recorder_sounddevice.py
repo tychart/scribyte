@@ -7,7 +7,7 @@ import sounddevice as sd
 
 from app.services.recorder_audio import prepare_audio
 from app.services.recorder_contract import RecorderStateError
-from app.services.recorder_devices import choose_wasapi_input_device
+from app.services.recorder_devices import pick_input_device
 
 
 class RecorderState:
@@ -30,7 +30,7 @@ class RecorderState:
         return self._input_device
 
     def _resolve_input_device(self):
-        return choose_wasapi_input_device(fallback_sample_rate=self.sample_rate)
+        return pick_input_device(fallback_sample_rate=self.sample_rate)
 
     def _callback(
         self,
@@ -75,7 +75,7 @@ class RecorderState:
                 self._capture_sample_rate = self.sample_rate
                 self._started_at = None
             raise RecorderStateError(
-                f"Failed to start WASAPI recording stream for {input_device.name or input_device.index}: {error}"
+                f"Failed to start recording stream for {input_device.name or input_device.index}: {error}"
             ) from error
 
         with self._lock:
