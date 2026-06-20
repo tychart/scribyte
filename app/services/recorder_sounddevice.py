@@ -29,8 +29,8 @@ class RecorderState:
     def input_device(self) -> str | None:
         return self._input_device
 
-    def _resolve_input_device(self):
-        return pick_input_device(fallback_sample_rate=self.sample_rate)
+    def _resolve_input_device(self, device_index: int | None = None):
+        return pick_input_device(fallback_sample_rate=self.sample_rate, device_index=device_index)
 
     def _callback(
         self,
@@ -44,12 +44,12 @@ class RecorderState:
             chunk = np.asarray(indata, dtype=np.float32).reshape(-1).copy()
             self._chunks.append(chunk)
 
-    def start(self) -> None:
+    def start(self, device_index: int | None = None) -> None:
         with self._lock:
             if self._stream is not None:
                 raise RecorderStateError("Recording is already in progress")
 
-            input_device = self._resolve_input_device()
+            input_device = self._resolve_input_device(device_index=device_index)
 
             self._chunks = []
             self._started_at = time.time()

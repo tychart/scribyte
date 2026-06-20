@@ -1,6 +1,13 @@
 from pydantic import BaseModel
 
 
+class InputDeviceSchema(BaseModel):
+    index: int
+    name: str
+    sample_rate: int
+    hostapi: str | None = None
+
+
 class StatusResponse(BaseModel):
     ready: bool
     device: str | None = None
@@ -10,6 +17,11 @@ class StatusResponse(BaseModel):
     startup_error: str | None = None
     startup_log: list[str] | None = None
     debug_recordings_dir: str | None = None
+    input_devices: list[InputDeviceSchema] = []
+
+
+class ListDevicesResponse(BaseModel):
+    devices: list[InputDeviceSchema]
 
 
 class StartRecordingResponse(BaseModel):

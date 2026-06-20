@@ -100,6 +100,71 @@ def list_input_devices(fallback_sample_rate: int) -> list[InputDevice]:
     return sorted(inputs, key=lambda d: d.index)
 
 
+def _resolve_linux_default_input(devices: list[InputDevice]) -> int | None:
+    """On Linux with PulseAudio/PipeWire, query pactl get-default-source
+to find the system default input and match it to a sounddevice device.
+Returns the sounddevice index or None if no match found."""
+    import subprocess
+    import platform
+
+    if platform.system() != "Linux":
+        return None
+
+    if not devices:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["pactl", "get-default-source"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        source_name = result.stdout.strip()
+        if not source_name:
+            return None
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+
+    try:
+        result = subprocess.run(
+            ["pactl", "list", "sources"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        source_blocks = result.stdout.split("\n\n")
+    except (subprocess.SubprocessError, FileNotFoundError):
+        return None
+
+    for block in source_blocks:
+        lines = block.strip().split("\n")
+        name_line = None
+        for line in lines:
+            if line.strip().startswith("Name:"):
+                name_line = line
+                break
+        if name_line is None or source_name not in name_line:
+            continue
+
+        for line in lines:
+            if line.strip().startswith("Description:"):
+                description = line.split(":", 1)[1].strip()
+                description_lower = description.lower()
+                for device in devices:
+                    if device.name and (description_lower in device.name.lower() or device.name.lower() in description_lower):
+                        return device.index
+                for device in devices:
+                    if device.name:
+                        device_parts = set(device.name.lower().split())
+                        desc_parts = set(description_lower.split())
+                        if device_parts & desc_parts:
+                            return device.index
+                break
+
+    return None
+
+
 def pick_input_device(fallback_sample_rate: int, device_index: int | None = None) -> InputDeviceSelection:
     """
     Unified device selection using sounddevice. Works on Windows and Linux.
@@ -107,6 +172,8 @@ def pick_input_device(fallback_sample_rate: int, device_index: int | None = None
     - If device_index is specified, returns that exact device.
     - Otherwise, prefers sd.default.input (the OS default) and falls back to
       the first available input device.
+    - On Linux with PulseAudio/PipeWire, also checks pactl get-default-source
+      as a fallback for detecting the system default input.
     """
     devices = list_input_devices(fallback_sample_rate)
 
@@ -119,7 +186,7 @@ def pick_input_device(fallback_sample_rate: int, device_index: int | None = None
                 return device.to_selection()
         raise RecorderStateError(f"Device index {device_index} was not found")
 
-    # Prefer system default input
+    # Prefer system default input via sounddevice
     _sd_default = getattr(sd, "default", None)
     default_input: object = None
     if _sd_default is not None:
@@ -128,6 +195,13 @@ def pick_input_device(fallback_sample_rate: int, device_index: int | None = None
     if isinstance(default_input, int):
         for device in devices:
             if device.index == default_input:
+                return device.to_selection()
+
+    # On Linux with PulseAudio/PipeWire, check for system default source
+    linux_default_index = _resolve_linux_default_input(devices)
+    if linux_default_index is not None:
+        for device in devices:
+            if device.index == linux_default_index:
                 return device.to_selection()
 
     # Fall back to first available

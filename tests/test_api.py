@@ -44,7 +44,8 @@ class FakeRecorder:
     def input_device(self) -> str | None:
         return self._input_device
 
-    def start(self) -> None:
+    def start(self, device_index: int | None = None) -> None:
+        del device_index
         if self.is_recording:
             raise RecorderStateError("Recording is already in progress")
         self.is_recording = True
@@ -96,10 +97,13 @@ class TestStatusEndpoint:
         assert data["debug_recordings_dir"] == str(Path(tempfile.gettempdir()) / "scribyte-debug-recordings")
 
     def test_status_reports_not_ready_when_no_transcriber(self):
-        app = create_app(transcriber=None, recorder=FakeRecorder())
+        app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
         async def run_test() -> httpx.Response:
             async with make_test_client(app) as client:
+                # Simulate startup failure after the lifespan opens
+                app.state.transcriber = None
+                app.state.startup_error = "Model not found"
                 return await client.get("/status")
 
         response = asyncio.run(run_test())
@@ -169,10 +173,13 @@ class TestStartRecordingEndpoint:
         assert response.status_code == 409
 
     def test_start_recording_503_when_no_transcriber(self):
-        app = create_app(transcriber=None, recorder=FakeRecorder())
+        app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
 
         async def run_test() -> httpx.Response:
             async with make_test_client(app) as client:
+                # Simulate startup failure after the lifespan opens
+                app.state.transcriber = None
+                app.state.startup_error = "Model not found"
                 return await client.post("/start_recording")
 
         response = asyncio.run(run_test())
