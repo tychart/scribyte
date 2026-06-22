@@ -126,7 +126,15 @@ app = create_app(device_limit=_device_limit)
 
 
 def main() -> None:
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)
+    from app.logging_config import LOGGING_CONFIG
+
+    uvicorn.run(
+        "app.main:app",
+        host="127.0.0.1",
+        port=8000,
+        reload=False,
+        log_config=LOGGING_CONFIG,
+    )
 
 
 if __name__ == "__main__":

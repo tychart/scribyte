@@ -77,13 +77,29 @@ def silence_aware_chunks(
     yield audio[chunk_start:chunk_end]
 
 
-_logger = logging.getLogger(__name__)
+_logger = logging.getLogger("scribyte.transcriber")
 
 
-def _detect_vram_error(msg: str) -> str | None:
-    """Check if an error is a GPU VRAM allocation failure and return a user-friendly message.
+def _detect_npu_error(msg: str) -> str | None:
+    """Check if an error is an NPU availability failure and return a user-friendly message.
 
     Returns the friendly message if detected, otherwise None.
+    """
+    upper = msg.upper()
+    # NPU compiler/runtime libraries missing — the most common cause.
+    if "VCL COMPILER LOADING FAILED" in upper:
+        return "NPU not available — the Intel NPU compiler/runtime libraries are missing on this system."
+    # NPU library not found (generic "cannot load library" with NPU lib names)
+    if "INTEL_NPU" in upper and "CANNOT LOAD LIBRARY" in upper:
+        return "NPU not available — the Intel NPU compiler/runtime libraries are missing on this system."
+    return None
+
+
+def _detect_gpu_error(msg: str) -> str | None:
+    """Check if an error is a GPU inference failure and return a user-friendly message.
+
+    Returns the friendly message if detected, otherwise None.
+    Covers VRAM exhaustion, context creation failures, and other GPU runtime issues.
     """
     upper = msg.upper()
     # clEnqueueMapBuffer, error code: -4 CL_MEM_OBJECT_ALLOCATION_FAILURE
@@ -93,6 +109,11 @@ def _detect_vram_error(msg: str) -> str | None:
     # cannot satisfy buffer mapping requests (VRAM exhaustion or driver-level limits).
     if "CLENQUEUEMAPBUFFER" in upper and "CL_INVALID_VALUE" in upper:
         return "GPU VRAM is full — the model could not allocate memory on the GPU. Falling back to CPU."
+    # clCreateContext failure — GPU device unavailable (driver, VRAM, or permission issue).
+    if "CLENQUEUEMAPBUFFER" not in upper and (
+        "CL_CREATECONTEXT" in upper or "CLCREATECONTEXT" in upper
+    ):
+        return "GPU inference failed — the GPU device is unavailable or its OpenCL runtime is not working. Falling back to CPU."
     # General OCL / GPU out-of-memory patterns
     if "OUT OF HOST MEMORY" in upper or "OUT OF DEVICE MEMORY" in upper:
         return "GPU memory allocation failed — not enough VRAM available. Falling back to CPU."
@@ -104,16 +125,19 @@ def format_ov_error(error: Exception) -> str:
 
     OpenVINO errors are multi-line with raw cpp/ocl paths. This strips those
     internal traces and keeps only the meaningful user-facing information.
-    GPU VRAM allocation failures are rewritten to plain-English messages.
+    NPU and GPU failures are rewritten to plain-English messages.
     """
     import re
 
     msg = str(error)
 
-    # First, check for VRAM-specific errors (before stripping traces).
-    vram_msg = _detect_vram_error(msg)
-    if vram_msg is not None:
-        return vram_msg
+    # Check for hardware/library-specific errors before stripping traces.
+    npu_msg = _detect_npu_error(msg)
+    if npu_msg is not None:
+        return npu_msg
+    gpu_msg = _detect_gpu_error(msg)
+    if gpu_msg is not None:
+        return gpu_msg
 
     lines = msg.splitlines()
     # Patterns that indicate OpenVINO internal trace lines (skip these entirely).
