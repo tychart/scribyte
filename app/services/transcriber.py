@@ -1,3 +1,4 @@
+import logging
 import time
 from typing import Iterator, Protocol, SupportsFloat, TypedDict
 
@@ -76,60 +77,77 @@ def silence_aware_chunks(
     yield audio[chunk_start:chunk_end]
 
 
+_logger = logging.getLogger(__name__)
+
+
+def format_ov_error(error: Exception) -> str:
+    """Extract a concise, human-readable error from OpenVINO exceptions.
+
+    OpenVINO errors are multi-line with raw cpp/ocl paths. This strips those
+    internal traces and keeps only the meaningful user-facing information.
+    """
+    import re
+
+    msg = str(error)
+    lines = msg.splitlines()
+    # Patterns that indicate OpenVINO internal trace lines (skip these entirely).
+    internal_patterns = ("src/plugins/intel_", "src/inference/src/")
+    filtered: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if any(stripped.startswith(p) for p in internal_patterns):
+            continue
+        # Lines like "Exception from src/.../file.cpp:NNN: detail" — extract just the detail.
+        if stripped.startswith("Exception from"):
+            idx = stripped.find("Exception from")
+            after = stripped[idx + len("Exception from"):].strip()
+            # Strip path:line_number: and keep only the message part.
+            # e.g. "src/inference/src/cpp/infer_request.cpp:224: some detail"
+            # -> "some detail"
+            m = re.match(r"[^:]+:\s*\d+\s*:\s*(.*)", after)
+            if m and m.group(1):
+                filtered.append(m.group(1))
+            continue
+        if stripped:
+            filtered.append(stripped)
+    if filtered:
+        return " ".join(filtered)
+    return msg
+
+
 class WhisperTranscriber:
-    def __init__(self, model_path: str = MODEL_PATH, device: str = "NPU", allow_fallback: bool = True):
+    def __init__(self, model_path: str = MODEL_PATH, device: str = "NPU"):
         self.model_path = model_path
         self.device = device
         self.sample_rate = SAMPLE_RATE
 
-        # Normalize device order and apply fallback if enabled.
-        def _order_from_requested(req: str) -> list[str]:
-            req_up = (req or "").upper()
-            if req_up == "NPU":
-                return ["NPU", "GPU", "CPU"]
-            if req_up == "GPU":
-                return ["GPU", "CPU"]
-            return ["CPU"]
-
-        tried: list[tuple[str, Exception | None]] = []
-        last_error: Exception | None = None
-
-        devices_to_try = _order_from_requested(device) if allow_fallback else [device]
-
-        for dev in devices_to_try:
-            try:
-                self.pipeline = ov_genai.WhisperPipeline(model_path, dev)
-                self.device = dev
-                # Determine the runtime-visible device name when possible.
-                try:
-                    from openvino import Core
-
-                    core = Core()
-                    available = list(core.available_devices)
-                    # prefer a device name that contains the requested device token
-                    token = dev.upper()
-                    match = None
-                    for dname in available:
-                        if token in dname.upper():
-                            match = dname
-                            break
-                    if match is None and available:
-                        match = available[0]
-                    self.runtime_device_name = match
-                except Exception:
-                    # best-effort only; don't fail if openvino Core isn't available
-                    self.runtime_device_name = None
-                break
-            except Exception as error:  # pragma: no cover - hardware/runtime dependent
-                last_error = error
-                tried.append((dev, error))
-
-        if not hasattr(self, "pipeline"):
-            # Build a helpful message including attempts
-            attempts = ", ".join(f"{d}: {e}" for d, e in tried)
+        try:
+            self.pipeline = ov_genai.WhisperPipeline(model_path, device)
+        except Exception as error:  # pragma: no cover - hardware/runtime dependent
+            concise = format_ov_error(error)
+            _logger.debug("WhisperPipeline init failed on %s (full trace below)", device, exc_info=True)
             raise WhisperTranscriberError(
-                f"Failed to initialize WhisperPipeline for requested device(s) {devices_to_try}. Attempts: {attempts}"
-            ) from last_error
+                f"WhisperPipeline failed on {device}: {concise}"
+            ) from error
+
+        # Determine the runtime-visible device name when possible.
+        try:
+            from openvino import Core
+
+            core = Core()
+            available = list(core.available_devices)
+            # prefer a device name that contains the requested device token
+            token = device.upper()
+            match = None
+            for dname in available:
+                if token in dname.upper():
+                    match = dname
+                    break
+            if match is None and available:
+                match = available[0]
+            self.runtime_device_name = match
+        except Exception:  # best-effort only; don't fail if openvino Core isn't available
+            self.runtime_device_name = None
 
     def warmup(self) -> None:
         silence = np.zeros(self.sample_rate, dtype=np.float32)

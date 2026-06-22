@@ -113,59 +113,37 @@ class TestTranscriptionResult:
         assert isinstance(result["latency_seconds"], float)
 
 
-def _make_mock_pipeline() -> Any:
+def _make_mock_pipeline(*args: Any, **kwargs: Any) -> Any:
     """Create a mock WhisperPipeline for testing."""
     _MockResult = type("Result", (), {"texts": ["mock"]})
-    _MockPipeline = type("MockPipeline", (), {"generate": _MockResult()})  # noqa: N806
+
+    class _MockPipeline:  # noqa: N801
+        @staticmethod
+        def generate(*args: Any, **kwargs: Any) -> Any:
+            return _MockResult()
+
     return _MockPipeline
 
 
-class TestWhisperTranscriberFallback:
-    """Tests for WhisperTranscriber fallback chain.
+class TestWhisperTranscriberSingleDevice:
+    """Tests for WhisperTranscriber single-device initialization.
 
-    These tests mock the underlying OpenVINO pipeline to verify fallback behavior
-    without requiring actual hardware.
+    Fallback ordering is handled by main.py, not by WhisperTranscriber.
+    WhisperTranscriber tries exactly one device and raises on failure.
     """
 
-    def test_fallback_npu_to_gpu(self, monkeypatch: Any) -> None:
-        """If NPU fails, should try GPU next."""
+    def test_successful_init_sets_device(self, monkeypatch: Any) -> None:
+        """If the requested device works, device is set and pipeline created."""
         import openvino_genai as ov_genai
 
-        call_count = 0
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", _make_mock_pipeline)
 
-        def failing_init(*args: Any, **kwargs: Any) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("NPU not available")
-            return _make_mock_pipeline()
-
-        monkeypatch.setattr(ov_genai, "WhisperPipeline", failing_init)
-
-        transcriber = WhisperTranscriber(device="NPU", allow_fallback=True)
-        assert transcriber.device == "GPU"
-
-    def test_fallback_gpu_to_cpu(self, monkeypatch: Any) -> None:
-        """If GPU fails, should try CPU next."""
-        import openvino_genai as ov_genai
-
-        call_count = 0
-
-        def failing_init(*args: Any, **kwargs: Any) -> Any:
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise RuntimeError("GPU not available")
-            # Second call (CPU) succeeds
-            return _make_mock_pipeline()
-
-        monkeypatch.setattr(ov_genai, "WhisperPipeline", failing_init)
-
-        transcriber = WhisperTranscriber(device="GPU", allow_fallback=True)
+        transcriber = WhisperTranscriber(device="CPU")
         assert transcriber.device == "CPU"
+        assert transcriber.pipeline is not None
 
-    def test_no_fallback_when_disabled(self, monkeypatch: Any) -> None:
-        """If allow_fallback=False and device fails, should raise."""
+    def test_failed_init_raises_error_with_device_name(self, monkeypatch: Any) -> None:
+        """If the device fails, WhisperTranscriberError includes the device name."""
         import openvino_genai as ov_genai
 
         def always_fail(*args: Any, **kwargs: Any) -> Any:
@@ -173,62 +151,60 @@ class TestWhisperTranscriberFallback:
 
         monkeypatch.setattr(ov_genai, "WhisperPipeline", always_fail)
 
-        with pytest.raises(WhisperTranscriberError, match="Failed to initialize"):
-            WhisperTranscriber(device="GPU", allow_fallback=False)
+        with pytest.raises(WhisperTranscriberError, match="GPU"):
+            WhisperTranscriber(device="GPU")
 
-    def test_all_devices_fail_raises_helpful_error(self, monkeypatch: Any) -> None:
-        """If all devices fail, error should list each attempt."""
+    def test_failed_init_error_contains_concise_message(self, monkeypatch: Any) -> None:
+        """Error message should be concise, not raw OpenVINO internals."""
         import openvino_genai as ov_genai
 
-        def always_fail(*args: Any, **kwargs: Any) -> Any:
-            raise RuntimeError("Not available")
+        def fail_with_ov_style(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError(
+                "Exception from src/inference/src/cpp/infer_request.cpp:224:\n"
+                "Exception from src/plugins/intel_gpu/src/runtime/ocl/ocl_memory.cpp:74:\n"
+                "[GPU] clEnqueueMapBuffer, error code: -30 CL_INVALID_VALUE"
+            )
 
-        monkeypatch.setattr(ov_genai, "WhisperPipeline", always_fail)
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", fail_with_ov_style)
 
         with pytest.raises(WhisperTranscriberError) as exc_info:
-            WhisperTranscriber(device="NPU", allow_fallback=True)
+            WhisperTranscriber(device="GPU")
 
         error_msg = str(exc_info.value)
-        assert "NPU" in error_msg
+        # Should contain the device name and a recognizable error token
         assert "GPU" in error_msg
-        assert "CPU" in error_msg
-
-    def test_requested_device_order_gpu(self, monkeypatch: Any) -> None:
-        """Requesting GPU should try GPU then CPU only (NPU skipped)."""
-        import openvino_genai as ov_genai
-
-        devices_tried: list[str] = []
-
-        def record_device(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
-            devices_tried.append(device)
-            if device == "GPU":
-                raise RuntimeError("GPU not available")
-            return _make_mock_pipeline()
-
-        monkeypatch.setattr(ov_genai, "WhisperPipeline", record_device)
-
-        transcriber = WhisperTranscriber(device="GPU", allow_fallback=True)
-        assert "GPU" in devices_tried
-        assert "CPU" in devices_tried
-        assert "NPU" not in devices_tried
-        assert transcriber.device == "CPU"
-
-    def test_requested_device_order_cpu(self, monkeypatch: Any) -> None:
-        """Requesting CPU should only try CPU."""
-        import openvino_genai as ov_genai
-
-        devices_tried: list[str] = []
-
-        def record_device(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
-            devices_tried.append(device)
-            return _make_mock_pipeline()
-
-        monkeypatch.setattr(ov_genai, "WhisperPipeline", record_device)
-
-        transcriber = WhisperTranscriber(device="CPU", allow_fallback=True)
-        assert devices_tried == ["CPU"]
-        assert transcriber.device == "CPU"
+        # Should not contain raw cpp paths
+        assert "src/inference/src/cpp" not in error_msg
 
     def test_sample_rate_is_constant(self) -> None:
         """Sample rate should always be 16000."""
         assert SAMPLE_RATE == 16000
+
+
+class TestFormatOVError:
+    """Tests for the _format_ov_error helper."""
+
+    def test_strips_cpp_path(self) -> None:
+        from app.services.transcriber import format_ov_error
+
+        err = RuntimeError("Exception from src/inference/src/cpp/infer_request.cpp:224: some detail")
+        result = format_ov_error(err)
+        assert "src/inference/src/cpp" not in result
+        assert "some detail" in result
+
+    def test_handles_cl_error(self) -> None:
+        from app.services.transcriber import format_ov_error
+
+        err = RuntimeError(
+            "[GPU] clEnqueueMapBuffer, error code: -30 CL_INVALID_VALUE"
+        )
+        result = format_ov_error(err)
+        assert "clEnqueueMapBuffer" in result
+        assert "CL_INVALID_VALUE" in result
+
+    def test_passthrough_for_plain_error(self) -> None:
+        from app.services.transcriber import format_ov_error
+
+        err = RuntimeError("Simple error message")
+        result = format_ov_error(err)
+        assert result == "Simple error message"

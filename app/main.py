@@ -12,7 +12,7 @@ from app.services.recorder import Recorder, RecorderState, RecorderStateError
 from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTranscriberError
 
 
-def _determine_device_order(limit: str | None) -> list[str]:
+def determine_device_order(limit: str | None) -> list[str]:
     if limit is None:
         return ["NPU", "GPU", "CPU"]
     limit = limit.lower()
@@ -38,7 +38,7 @@ def create_app(
         app.state.recorder = recorder
 
         # determine device preference order
-        device_order = _determine_device_order(device_limit or os.environ.get("SCRIBYTE_LIMIT"))
+        device_order = determine_device_order(device_limit or os.environ.get("SCRIBYTE_LIMIT"))
         logger.info("Device selection order: %s", ",".join(device_order))
         startup_log.append(f"Device selection order: {', '.join(device_order)}")
 
@@ -46,19 +46,24 @@ def create_app(
             last_exc: Exception | None = None
             selected_device: str | None = None
             runtime_name: str | None = None
-            for device in device_order:
-                logger.info("Attempting to initialize transcriber on %s", device)
-                startup_log.append(f"Attempting to initialize transcriber on {device}")
+
+            for i, device in enumerate(device_order):
+                next_device = device_order[i + 1] if i + 1 < len(device_order) else None
+
+                logger.info("Initializing transcriber on %s", device)
+                startup_log.append(f"Initializing transcriber on {device}")
                 try:
                     app.state.transcriber = WhisperTranscriber(model_path=MODEL_PATH, device=device)
                     app.state.transcriber.warmup()
                     runtime_name = getattr(app.state.transcriber, "runtime_device_name", None)
                     selected_device = device
+                    fallback_note = f", falling back to {next_device}" if next_device else ""
                     logger.info(
-                        "Initialized transcriber on %s (runtime device: %s, model: %s)",
+                        "Initialized transcriber on %s (runtime device: %s, model: %s)%s",
                         device,
                         runtime_name,
                         MODEL_PATH,
+                        fallback_note,
                     )
                     startup_log.append(
                         f"Initialized transcriber on {device} "
@@ -67,9 +72,11 @@ def create_app(
                     break
                 except WhisperTranscriberError as error:
                     last_exc = error
-                    msg = f"Failed to initialize on {device}: {error}"
-                    startup_log.append(msg)
-                    logger.warning(msg)
+                    fallback_to = f", falling back to {next_device}" if next_device else ""
+                    concise_msg = f"{device} not available{fallback_to}: {error}"
+                    logger.warning(concise_msg)
+                    logger.debug("%s — full trace:", error, exc_info=True)
+                    startup_log.append(f"{device} not available{fallback_to}: {error}")
 
             if selected_device is not None:
                 logger.info(

@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 import sys
 import tempfile
+from typing import Any
 
 from fastapi import FastAPI
 import httpx
@@ -400,3 +401,116 @@ class TestUnifiedPickInputDevice:
         assert selection is not None
         assert selection.index is not None
         assert selection.sample_rate > 0
+
+
+class TestDeviceFallback:
+    """Tests for device fallback ordering in create_app."""
+
+    def test_determine_device_order_default(self) -> None:
+        from app.main import determine_device_order
+
+        assert determine_device_order(None) == ["NPU", "GPU", "CPU"]
+
+    def test_determine_device_order_gpu(self) -> None:
+        from app.main import determine_device_order
+
+        assert determine_device_order("GPU") == ["GPU", "CPU"]
+
+    def test_determine_device_order_cpu(self) -> None:
+        from app.main import determine_device_order
+
+        assert determine_device_order("CPU") == ["CPU"]
+
+    def test_fallback_npu_to_gpu_in_app(self, monkeypatch: Any) -> None:
+        """When NPU fails, main.py should try GPU next and succeed."""
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        def failing_init(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
+            if device == "NPU":
+                raise RuntimeError("NPU not available")
+            return _make_mock_pipeline()
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", failing_init)
+
+        app = create_app()
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+        assert response.status_code == 200
+        assert data["device"] == "GPU"
+        assert data["ready"] is True
+        assert "NPU not available" in data["startup_log"][2]  # third entry: NPU fail line
+        assert "falling back" in data["startup_log"][2].lower()
+
+    def test_fallback_all_devices_fail_in_app(self, monkeypatch: Any) -> None:
+        """When all devices fail, app should report startup error."""
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        def always_fail(*args: Any, **kwargs: Any) -> Any:
+            raise RuntimeError("Device unavailable")
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", always_fail)
+
+        app = create_app()
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+        assert response.status_code == 200
+        assert data["ready"] is False
+        assert data["startup_error"] is not None
+        # startup_log[0] = device order, [1] = init NPU, [2] = NPU fail, etc.
+        assert "NPU" in data["startup_log"][1]
+        assert "not available" in data["startup_log"][2].lower()
+        assert "GPU" in data["startup_log"][4]
+        assert "CPU" in data["startup_log"][6]
+
+    def test_no_fallback_when_device_limit_gpu(self, monkeypatch: Any) -> None:
+        """When device_limit=GPU, NPU should not be tried."""
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        call_order: list[str] = []
+
+        def record_device(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
+            call_order.append(device)
+            if device == "GPU":
+                raise RuntimeError("GPU not available")
+            return _make_mock_pipeline()
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", record_device)
+
+        app = create_app(device_limit="gpu")
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+        assert response.status_code == 200
+        assert data["device"] == "CPU"
+        assert "NPU" not in call_order  # NPU never tried
+        # CPU should be in log as fallback
+        assert any("falling back" in line.lower() for line in data["startup_log"])
+
+
+def _make_mock_pipeline(*args: Any, **kwargs: Any) -> Any:
+    """Create a mock WhisperPipeline for testing."""
+    _MockResult = type("Result", (), {"texts": ["mock"]})
+
+    class _MockPipeline:  # noqa: N801
+        @staticmethod
+        def generate(*args: Any, **kwargs: Any) -> Any:
+            return _MockResult()
+
+    return _MockPipeline
