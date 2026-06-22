@@ -10,3 +10,6 @@ wheels/
 .venv
 
 whisper_base_ov/
+
+# LLM Agent
+plans/

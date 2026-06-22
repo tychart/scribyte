@@ -2,10 +2,8 @@ from contextlib import asynccontextmanager
 import logging
 import logging.config
 import os
-import sys
 
 from fastapi import FastAPI
-import uvicorn
 
 from app.api.routes.dictation import router as dictation_router
 from app.core.config import API_DESCRIPTION, API_TITLE, API_VERSION, MODEL_PATH, SAMPLE_RATE
@@ -14,9 +12,8 @@ from app.services.recorder import Recorder, RecorderState, RecorderStateError
 from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTranscriberError
 
 # Apply the logging configuration at module import time so it takes effect
-# regardless of how the server is started (fastapi run, uvicorn, or
-# `python -m app.main`). This must happen before any other module-level
-# logging calls.
+# for all loggers (uvicorn + scribyte) regardless of how the server is
+# started. This must happen before any module-level logging calls.
 logging.config.dictConfig(LOGGING_CONFIG)
 
 
@@ -122,26 +119,6 @@ def create_app(
     return app
 
 
-_device_limit: str | None = None
-if "--gpu" in sys.argv:
-    _device_limit = "gpu"
-elif "--cpu" in sys.argv:
-    _device_limit = "cpu"
-else:
-    _device_limit = os.environ.get("SCRIBYTE_LIMIT")
+_device_limit: str | None = os.environ.get("SCRIBYTE_LIMIT")
 
 app = create_app(device_limit=_device_limit)
-
-
-def main() -> None:
-    uvicorn.run(
-        "app.main:app",
-        host="127.0.0.1",
-        port=8000,
-        reload=False,
-        log_config=LOGGING_CONFIG,
-    )
-
-
-if __name__ == "__main__":
-    main()

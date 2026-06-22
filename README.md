@@ -21,13 +21,13 @@ Scribyte runs on Windows and Linux. On Windows it prefers Intel NPU with `NPU ->
 
 ## Architecture
 
-- `app/`: FastAPI application, routes, dependencies, schemas, and services.
+- `app/`: FastAPI application, routes, dependencies, schemas, services, and centralized logging config.
 - `scripts/`: local utility scripts for hardware checks and recorder debugging.
 - `tests/`: API tests, NPU-backed transcription fixture tests, and integration test markers.
 - `docs/reference/`: reference code kept for comparison, not production runtime.
 - `scribyte.ahk`: Windows desktop hotkey client for the local API.
 
-The important design rule is that the Whisper pipeline is created once at startup and reused for every request. Do not move model initialization into request handlers unless you are intentionally changing the latency model.
+The server is started exclusively via the FastAPI CLI (`fastapi run` or `fastapi dev`). The Whisper pipeline is created once at startup and reused for every request — do not move model initialization into request handlers unless you are intentionally changing the latency model.
 
 ## Getting started on Windows
 
@@ -115,28 +115,21 @@ If your machine is configured correctly for Intel NPU, you should see `NPU` in t
 
 ### 6. Start the local API
 
-Use the configured FastAPI entrypoint:
+Use the FastAPI CLI:
 
-Production (localhost only):
 ```powershell
 uv run fastapi run --host 127.0.0.1
 ```
 
-Development
+Development (auto-reload):
 
 ```powershell
 uv run fastapi dev
 ```
 
-Alternative:
+By default `fastapi run` binds to `0.0.0.0`. Use `--host 127.0.0.1` when you want the server exposed only locally.
 
-```powershell
-uv run python -m app.main
-```
-
-The plain `fastapi run` command binds to `0.0.0.0` by default, so use the explicit `--host 127.0.0.1` flag above when you want the production server exposed only to the local machine.
-
-With the commands above, the app listens on `http://127.0.0.1:8000`.
+The app listens on `http://127.0.0.1:8000`.
 
 ### 7. Confirm the backend is healthy
 
@@ -241,6 +234,14 @@ On Linux, you should see `GPU` and/or `CPU` in the printed device list.
 ```bash
 uv run fastapi run --host 127.0.0.1
 ```
+
+Development (auto-reload):
+
+```bash
+uv run fastapi dev
+```
+
+By default `fastapi run` binds to `0.0.0.0`. Use `--host 127.0.0.1` for localhost-only access.
 
 ### 8. Confirm the backend is healthy
 
@@ -391,7 +392,8 @@ pyproject.toml
 
 ## Current limitations
 
-- The runtime initializes the transcriber on `NPU` (Windows) or `GPU` (Linux) in `app/main.py`.
+- The runtime initializes the transcriber on `NPU` (Windows) or `GPU` (Linux); falls back to `CPU` when a device is unavailable.
+- Set `SCRIBYTE_LIMIT=cpu` or `SCRIBYTE_LIMIT=gpu` to control device selection.
 - Microphone capture debugging still starts with listening to saved WAV output.
 - No API key authentication or network-based transcription yet (design is prepared for it).
 
@@ -401,3 +403,4 @@ pyproject.toml
 - Keep operator or hardware utilities under `scripts/`.
 - Keep prototypes and historical reference code under `docs/reference/`.
 - Keep audio capture in Python, not AutoHotkey.
+- Start the server with `fastapi run` or `fastapi dev` — there is no separate entrypoint script.
