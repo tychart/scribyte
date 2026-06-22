@@ -199,8 +199,8 @@ class TestFormatOVError:
             "[GPU] clEnqueueMapBuffer, error code: -30 CL_INVALID_VALUE"
         )
         result = format_ov_error(err)
-        assert "clEnqueueMapBuffer" in result
-        assert "CL_INVALID_VALUE" in result
+        # clEnqueueMapBuffer with CL_INVALID_VALUE is detected as a GPU VRAM failure
+        assert "GPU VRAM is full" in result
 
     def test_passthrough_for_plain_error(self) -> None:
         from app.services.transcriber import format_ov_error

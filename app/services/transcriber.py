@@ -80,15 +80,41 @@ def silence_aware_chunks(
 _logger = logging.getLogger(__name__)
 
 
+def _detect_vram_error(msg: str) -> str | None:
+    """Check if an error is a GPU VRAM allocation failure and return a user-friendly message.
+
+    Returns the friendly message if detected, otherwise None.
+    """
+    upper = msg.upper()
+    # clEnqueueMapBuffer, error code: -4 CL_MEM_OBJECT_ALLOCATION_FAILURE
+    if "CL_MEM_OBJECT_ALLOCATION_FAILURE" in upper:
+        return "GPU VRAM is full — the model could not allocate memory on the GPU. Falling back to CPU."
+    # clEnqueueMapBuffer with CL_INVALID_VALUE (-30) — OpenVINO reports this when the GPU
+    # cannot satisfy buffer mapping requests (VRAM exhaustion or driver-level limits).
+    if "CLENQUEUEMAPBUFFER" in upper and "CL_INVALID_VALUE" in upper:
+        return "GPU VRAM is full — the model could not allocate memory on the GPU. Falling back to CPU."
+    # General OCL / GPU out-of-memory patterns
+    if "OUT OF HOST MEMORY" in upper or "OUT OF DEVICE MEMORY" in upper:
+        return "GPU memory allocation failed — not enough VRAM available. Falling back to CPU."
+    return None
+
+
 def format_ov_error(error: Exception) -> str:
     """Extract a concise, human-readable error from OpenVINO exceptions.
 
     OpenVINO errors are multi-line with raw cpp/ocl paths. This strips those
     internal traces and keeps only the meaningful user-facing information.
+    GPU VRAM allocation failures are rewritten to plain-English messages.
     """
     import re
 
     msg = str(error)
+
+    # First, check for VRAM-specific errors (before stripping traces).
+    vram_msg = _detect_vram_error(msg)
+    if vram_msg is not None:
+        return vram_msg
+
     lines = msg.splitlines()
     # Patterns that indicate OpenVINO internal trace lines (skip these entirely).
     internal_patterns = ("src/plugins/intel_", "src/inference/src/")
@@ -154,7 +180,8 @@ class WhisperTranscriber:
         try:
             self.pipeline.generate(_to_audio_sequence(silence), language=LANGUAGE)
         except Exception as error:  # pragma: no cover - hardware/runtime dependent
-            raise WhisperTranscriberError(f"Whisper warmup failed: {error}") from error
+            concise = format_ov_error(error)
+            raise WhisperTranscriberError(f"Whisper warmup failed: {concise}") from error
 
     def transcribe(self, audio: NDArray[np.float32]) -> TranscriptionResult:
         normalized_audio = np.asarray(audio, dtype=np.float32).reshape(-1)
