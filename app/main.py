@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
+import logging.config
 import os
 import sys
 
@@ -8,8 +9,15 @@ import uvicorn
 
 from app.api.routes.dictation import router as dictation_router
 from app.core.config import API_DESCRIPTION, API_TITLE, API_VERSION, MODEL_PATH, SAMPLE_RATE
+from app.logging_config import LOGGING_CONFIG
 from app.services.recorder import Recorder, RecorderState, RecorderStateError
 from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTranscriberError
+
+# Apply the logging configuration at module import time so it takes effect
+# regardless of how the server is started (fastapi run, uvicorn, or
+# `python -m app.main`). This must happen before any other module-level
+# logging calls.
+logging.config.dictConfig(LOGGING_CONFIG)
 
 
 def determine_device_order(limit: str | None) -> list[str]:
@@ -126,8 +134,6 @@ app = create_app(device_limit=_device_limit)
 
 
 def main() -> None:
-    from app.logging_config import LOGGING_CONFIG
-
     uvicorn.run(
         "app.main:app",
         host="127.0.0.1",
