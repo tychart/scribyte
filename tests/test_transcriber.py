@@ -180,6 +180,34 @@ class TestWhisperTranscriberSingleDevice:
         """Sample rate should always be 16000."""
         assert SAMPLE_RATE == 16000
 
+    def test_warmup_primes_chunker_and_pipeline(self, monkeypatch: Any) -> None:
+        """Warmup should exercise preprocessing and pipeline generation."""
+        events: list[str] = []
+
+        class _MockPipeline:  # noqa: N801
+            @staticmethod
+            def generate(*args: Any, **kwargs: Any) -> Any:
+                events.append("generate")
+                return type("Result", (), {"texts": ["mock"]})()
+
+        def fake_pipeline(*args: Any, **kwargs: Any) -> Any:
+            return _MockPipeline()
+
+        def fake_chunks(audio: np.ndarray, max_chunk_seconds: int = 30):
+            del max_chunk_seconds
+            events.append(f"chunk:{len(audio)}")
+            yield audio
+
+        import openvino_genai as ov_genai
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", fake_pipeline)
+        monkeypatch.setattr("app.services.transcriber.silence_aware_chunks", fake_chunks)
+
+        transcriber = WhisperTranscriber(device="CPU")
+        transcriber.warmup()
+
+        assert events == ["chunk:16000", "generate"]
+
 
 class TestFormatOVError:
     """Tests for the _format_ov_error helper."""

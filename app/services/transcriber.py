@@ -201,6 +201,7 @@ class WhisperTranscriber:
 
     def warmup(self) -> None:
         silence = np.zeros(self.sample_rate, dtype=np.float32)
+        list(silence_aware_chunks(silence))
         try:
             self.pipeline.generate(_to_audio_sequence(silence), language=LANGUAGE)
         except Exception as error:  # pragma: no cover - hardware/runtime dependent
