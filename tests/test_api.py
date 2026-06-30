@@ -447,6 +447,27 @@ class TestDeviceFallback:
         assert "NPU not available" in data["startup_log"][2]  # third entry: NPU fail line
         assert "falling back" in data["startup_log"][2].lower()
 
+    def test_successful_init_does_not_log_fallback(self, monkeypatch: Any) -> None:
+        """A successful initialization should not claim a fallback happened."""
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", _make_mock_pipeline)
+
+        app = create_app()
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+
+        assert response.status_code == 200
+        initialized_lines = [line for line in data["startup_log"] if line.startswith("Initialized transcriber on")]
+        assert len(initialized_lines) == 1
+        assert "falling back" not in initialized_lines[0].lower()
+
     def test_fallback_all_devices_fail_in_app(self, monkeypatch: Any) -> None:
         """When all devices fail, app should report startup error."""
         from app.main import create_app

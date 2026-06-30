@@ -62,13 +62,11 @@ def create_app(
                     app.state.transcriber.warmup()
                     runtime_name = getattr(app.state.transcriber, "runtime_device_name", None)
                     selected_device = device
-                    fallback_note = f", falling back to {next_device}" if next_device else ""
                     logger.info(
-                        "Initialized transcriber on %s (runtime device: %s, model: %s)%s",
+                        "Initialized transcriber on %s (runtime device: %s, model: %s)",
                         device,
                         runtime_name,
                         MODEL_PATH,
-                        fallback_note,
                     )
                     startup_log.append(
                         f"Initialized transcriber on {device} "
