@@ -244,7 +244,7 @@ StopStatusPolling() {
 
 PasteTranscription(text) {
     savedClipboard := ClipboardAll()
-    A_Clipboard := text
+    A_Clipboard := PrepareTextForPaste(text)
 
     if !ClipWait(1) {
         A_Clipboard := savedClipboard
@@ -255,6 +255,39 @@ PasteTranscription(text) {
     Send(SCRIBYTE_PASTE_SHORTCUT)
     SetTimer(RestoreClipboard.Bind(savedClipboard), -250)
     return true
+}
+
+
+PrepareTextForPaste(text) {
+    if text = "" || RegExMatch(text, "^\s") {
+        return text
+    }
+
+    previousCharacter := GetPreviousCharacter()
+    if previousCharacter = "" || RegExMatch(previousCharacter, "^\s+$") {
+        return text
+    }
+
+    return " " . text
+}
+
+
+GetPreviousCharacter() {
+    savedClipboard := ClipboardAll()
+    A_Clipboard := ""
+
+    Send("+{Left}")
+    Sleep(10)
+    Send("^c")
+    copiedText := ClipWait(0.1) ? A_Clipboard : ""
+    Send("{Right}")
+    A_Clipboard := savedClipboard
+
+    if StrLen(copiedText) != 1 {
+        return ""
+    }
+
+    return copiedText
 }
 
 
