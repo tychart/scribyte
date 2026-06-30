@@ -7,10 +7,13 @@ global SCRIBYTE_PASTE_SHORTCUT := "^v"
 global SCRIBYTE_STATUS_DURATION_MS := 3000
 global SCRIBYTE_LONG_STATUS_DURATION_MS := 5000
 global SCRIBYTE_RECORDING_STATUS_DURATION_MS := 1800
+global SCRIBYTE_STATUS_RETRY_INTERVAL_MS := 5000
 global scribyteIsRecording := false
+global scribyteBackendReady := false
+global scribyteStatusPollActive := false
 
 A_TrayMenu.Delete()
-A_TrayMenu.Add("Check Scribyte Status", CheckScribyteStatus)
+A_TrayMenu.Add("Check Scribyte Status", ManualCheckScribyteStatus)
 A_TrayMenu.Add()
 A_TrayMenu.Add("Exit", ExitScribyte)
 
@@ -96,16 +99,24 @@ StopDictation(*) {
 }
 
 
-CheckScribyteStatus(*) {
+ManualCheckScribyteStatus(*) {
+    CheckScribyteStatus(true)
+}
+
+
+CheckScribyteStatus(alwaysShowReady := true) {
+    global scribyteBackendReady
+    global scribyteIsRecording
+
     try {
         response := ApiRequest("GET", "/status")
     } catch as err {
-        ShowStatus("Could not reach Scribyte API.`n" . err.Message, SCRIBYTE_LONG_STATUS_DURATION_MS)
+        HandleBackendUnavailable("Could not reach Scribyte API.`n" . err.Message)
         return
     }
 
     if response["status"] != 200 {
-        ShowStatus("Status check failed.`n" . GetErrorMessage(response["body"]), SCRIBYTE_LONG_STATUS_DURATION_MS)
+        HandleBackendUnavailable("Status check failed.`n" . GetErrorMessage(response["body"]))
         return
     }
 
@@ -119,15 +130,22 @@ CheckScribyteStatus(*) {
         if startupError != "" {
             message .= "`n" . startupError
         }
-        ShowStatus(message, SCRIBYTE_LONG_STATUS_DURATION_MS)
+        HandleBackendUnavailable(message)
         return
     }
+
+    wasReady := scribyteBackendReady
+    scribyteBackendReady := true
+    scribyteIsRecording := recording
+    StopStatusPolling()
 
     message := "Scribyte ready on " . device . "."
     if recording {
         message .= "`nA recording is already active."
     }
-    ShowStatus(message)
+    if alwaysShowReady || !wasReady {
+        ShowStatus(message)
+    }
 }
 
 
@@ -156,20 +174,64 @@ ApiRequest(method, path, body := "") {
 
 RefreshRecordingState() {
     global scribyteIsRecording
+    global scribyteBackendReady
 
     try {
         response := ApiRequest("GET", "/status")
     } catch {
         scribyteIsRecording := false
+        scribyteBackendReady := false
         return
     }
 
     if response["status"] != 200 {
         scribyteIsRecording := false
+        scribyteBackendReady := false
         return
     }
 
     scribyteIsRecording := JsonGetBoolean(response["body"], "recording", false)
+    scribyteBackendReady := JsonGetBoolean(response["body"], "ready", false)
+}
+
+
+HandleBackendUnavailable(message) {
+    global scribyteBackendReady
+    global scribyteIsRecording
+    global scribyteStatusPollActive
+
+    shouldNotify := scribyteBackendReady || !scribyteStatusPollActive
+    scribyteBackendReady := false
+    scribyteIsRecording := false
+    StartStatusPolling()
+
+    if shouldNotify {
+        ShowStatus(message, SCRIBYTE_LONG_STATUS_DURATION_MS)
+    }
+}
+
+
+StartStatusPolling() {
+    global scribyteStatusPollActive
+
+    if scribyteStatusPollActive {
+        return
+    }
+
+    scribyteStatusPollActive := true
+    SetTimer(CheckScribyteStatus, SCRIBYTE_STATUS_RETRY_INTERVAL_MS)
+}
+
+
+StopStatusPolling() {
+    global scribyteStatusPollActive
+
+    if !scribyteStatusPollActive {
+        return
+    }
+
+    scribyteStatusPollActive := false
+    SetTimer(CheckScribyteStatus, 0)
 }
 
 
