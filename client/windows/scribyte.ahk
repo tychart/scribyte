@@ -34,7 +34,7 @@ StartDictation(*) {
     try {
         response := ApiRequest("POST", "/start_recording")
     } catch as err {
-        ShowStatus("Could not reach Scribyte API.`n" . err.Message, SCRIBYTE_LONG_STATUS_DURATION_MS)
+        HandleBackendUnavailable("Could not reach Scribyte API.`n" . err.Message)
         return
     }
 
@@ -64,8 +64,7 @@ StopDictation(*) {
     try {
         response := ApiRequest("POST", "/stop_recording_and_transcribe")
     } catch as err {
-        RefreshRecordingState()
-        ShowStatus("Could not reach Scribyte API.`n" . err.Message, SCRIBYTE_LONG_STATUS_DURATION_MS)
+        HandleBackendUnavailable("Could not reach Scribyte API.`n" . err.Message)
         return
     }
 
@@ -86,7 +85,9 @@ StopDictation(*) {
         return
     }
 
-    PasteTranscription(text)
+    if !PasteTranscription(text) {
+        return
+    }
 
     summary := "Pasted dictation"
     if chunkCount {
@@ -106,7 +107,6 @@ ManualCheckScribyteStatus(*) {
 
 CheckScribyteStatus(alwaysShowReady := true) {
     global scribyteBackendReady
-    global scribyteIsRecording
 
     try {
         response := ApiRequest("GET", "/status")
@@ -135,9 +135,7 @@ CheckScribyteStatus(alwaysShowReady := true) {
     }
 
     wasReady := scribyteBackendReady
-    scribyteBackendReady := true
-    scribyteIsRecording := recording
-    StopStatusPolling()
+    SetBackendState(true, recording)
 
     message := "Scribyte ready on " . device . "."
     if recording {
@@ -173,41 +171,50 @@ ApiRequest(method, path, body := "") {
 
 
 RefreshRecordingState() {
-    global scribyteIsRecording
-    global scribyteBackendReady
-
     try {
         response := ApiRequest("GET", "/status")
     } catch {
-        scribyteIsRecording := false
-        scribyteBackendReady := false
+        SetBackendState(false)
         return
     }
 
     if response["status"] != 200 {
-        scribyteIsRecording := false
-        scribyteBackendReady := false
+        SetBackendState(false)
         return
     }
 
-    scribyteIsRecording := JsonGetBoolean(response["body"], "recording", false)
-    scribyteBackendReady := JsonGetBoolean(response["body"], "ready", false)
+    ready := JsonGetBoolean(response["body"], "ready", false)
+    recording := JsonGetBoolean(response["body"], "recording", false)
+    SetBackendState(ready, recording)
 }
 
 
 HandleBackendUnavailable(message) {
     global scribyteBackendReady
-    global scribyteIsRecording
     global scribyteStatusPollActive
 
     shouldNotify := scribyteBackendReady || !scribyteStatusPollActive
-    scribyteBackendReady := false
-    scribyteIsRecording := false
-    StartStatusPolling()
+    SetBackendState(false)
 
     if shouldNotify {
         ShowStatus(message, SCRIBYTE_LONG_STATUS_DURATION_MS)
     }
+}
+
+
+SetBackendState(isReady, isRecording := false) {
+    global scribyteBackendReady
+    global scribyteIsRecording
+
+    scribyteBackendReady := isReady
+    scribyteIsRecording := isRecording
+
+    if isReady {
+        StopStatusPolling()
+        return
+    }
+
+    StartStatusPolling()
 }
 
 
@@ -242,11 +249,12 @@ PasteTranscription(text) {
     if !ClipWait(1) {
         A_Clipboard := savedClipboard
         ShowStatus("Clipboard update timed out.")
-        return
+        return false
     }
 
     Send(SCRIBYTE_PASTE_SHORTCUT)
     SetTimer(RestoreClipboard.Bind(savedClipboard), -250)
+    return true
 }
 
 
