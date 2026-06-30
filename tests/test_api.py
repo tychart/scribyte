@@ -131,6 +131,19 @@ class TestStatusEndpoint:
         # ready should be False because startup_error is set
         assert data["ready"] is False
 
+    def test_status_reports_configured_model_when_startup_fails(self):
+        app = create_app(recorder=FakeRecorder(), model_selection="small")
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                app.state.transcriber = None
+                app.state.startup_error = "Model not found"
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+        assert data["model_path"].endswith("whisper_small_ov")
+
     def test_status_reports_recording_state(self):
         recorder = FakeRecorder()
         recorder.is_recording = True
@@ -174,7 +187,7 @@ class TestStartRecordingEndpoint:
         assert response.status_code == 409
 
     def test_start_recording_503_when_no_transcriber(self):
-        app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder())
+        app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder(), model_selection="small")
 
         async def run_test() -> httpx.Response:
             async with make_test_client(app) as client:
@@ -185,6 +198,20 @@ class TestStartRecordingEndpoint:
 
         response = asyncio.run(run_test())
         assert response.status_code == 503
+        assert response.json()["detail"] == "Model not found"
+
+    def test_start_recording_503_mentions_configured_model_without_startup_error(self):
+        app = create_app(transcriber=FakeTranscriber(), recorder=FakeRecorder(), model_selection="small")
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                app.state.transcriber = None
+                app.state.startup_error = None
+                return await client.post("/start_recording")
+
+        response = asyncio.run(run_test())
+        assert response.status_code == 503
+        assert response.json()["detail"].endswith("whisper_small_ov is not ready")
 
 
 class TestStopRecordingAndTranscribeEndpoint:
@@ -421,6 +448,26 @@ class TestDeviceFallback:
 
         assert determine_device_order("CPU") == ["CPU"]
 
+    def test_determine_model_path_defaults_to_base_model_folder(self) -> None:
+        from app.main import PROJECT_ROOT, determine_model_path
+
+        assert determine_model_path(None) == PROJECT_ROOT / "whisper_base_ov"
+
+    def test_determine_model_path_expands_simple_model_name(self) -> None:
+        from app.main import PROJECT_ROOT, determine_model_path
+
+        assert determine_model_path("small") == PROJECT_ROOT / "whisper_small_ov"
+
+    def test_determine_model_path_accepts_full_folder_name(self) -> None:
+        from app.main import PROJECT_ROOT, determine_model_path
+
+        assert determine_model_path("whisper_large_v3_ov") == PROJECT_ROOT / "whisper_large_v3_ov"
+
+    def test_determine_model_path_preserves_custom_relative_path(self) -> None:
+        from app.main import determine_model_path
+
+        assert determine_model_path("models/custom") == Path("models/custom")
+
     def test_fallback_npu_to_gpu_in_app(self, monkeypatch: Any) -> None:
         """When NPU fails, main.py should try GPU next and succeed."""
         from app.main import create_app
@@ -444,8 +491,9 @@ class TestDeviceFallback:
         assert response.status_code == 200
         assert data["device"] == "GPU"
         assert data["ready"] is True
-        assert "NPU not available" in data["startup_log"][2]  # third entry: NPU fail line
-        assert "falling back" in data["startup_log"][2].lower()
+        fallback_lines = [line for line in data["startup_log"] if "NPU not available" in line]
+        assert len(fallback_lines) == 1
+        assert "falling back" in fallback_lines[0].lower()
 
     def test_successful_init_does_not_log_fallback(self, monkeypatch: Any) -> None:
         """A successful initialization should not claim a fallback happened."""
@@ -489,11 +537,10 @@ class TestDeviceFallback:
         assert response.status_code == 200
         assert data["ready"] is False
         assert data["startup_error"] is not None
-        # startup_log[0] = device order, [1] = init NPU, [2] = NPU fail, etc.
-        assert "NPU" in data["startup_log"][1]
-        assert "not available" in data["startup_log"][2].lower()
-        assert "GPU" in data["startup_log"][4]
-        assert "CPU" in data["startup_log"][6]
+        assert any(line == "Initializing transcriber on NPU" for line in data["startup_log"])
+        assert any("NPU not available" in line for line in data["startup_log"])
+        assert any(line == "Initializing transcriber on GPU" for line in data["startup_log"])
+        assert any(line == "Initializing transcriber on CPU" for line in data["startup_log"])
 
     def test_no_fallback_when_device_limit_gpu(self, monkeypatch: Any) -> None:
         """When device_limit=GPU, NPU should not be tried."""
@@ -523,6 +570,33 @@ class TestDeviceFallback:
         assert "NPU" not in call_order  # NPU never tried
         # CPU should be in log as fallback
         assert any("falling back" in line.lower() for line in data["startup_log"])
+
+    def test_model_selection_uses_requested_model_folder(self, monkeypatch: Any) -> None:
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        captured_model_paths: list[str] = []
+
+        def record_model_path(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
+            del device, args, kwargs
+            captured_model_paths.append(model_path)
+            return _make_mock_pipeline()
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", record_model_path)
+
+        app = create_app(model_selection="small")
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+
+        assert response.status_code == 200
+        assert captured_model_paths[0].endswith("whisper_small_ov")
+        assert data["model_path"].endswith("whisper_small_ov")
+        assert "Configured model path:" in data["startup_log"][0]
 
 
 def _make_mock_pipeline(*args: Any, **kwargs: Any) -> Any:

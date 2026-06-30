@@ -9,7 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
-whisper_base_ov/
+
+whisper_*_ov/
 
 # LLM Agent
 plans/

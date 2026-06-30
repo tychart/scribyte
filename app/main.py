@@ -2,11 +2,19 @@ from contextlib import asynccontextmanager
 import logging
 import logging.config
 import os
+from pathlib import Path
 
 from fastapi import FastAPI
 
 from app.api.routes.dictation import router as dictation_router
-from app.core.config import API_DESCRIPTION, API_TITLE, API_VERSION, MODEL_PATH, SAMPLE_RATE
+from app.core.config import (
+    API_DESCRIPTION,
+    API_TITLE,
+    API_VERSION,
+    DEFAULT_MODEL_NAME,
+    MODEL_ENV_VAR,
+    SAMPLE_RATE,
+)
 from app.logging_config import LOGGING_CONFIG
 from app.services.recorder import Recorder, RecorderState, RecorderStateError
 from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTranscriberError
@@ -15,6 +23,8 @@ from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTra
 # for all loggers (uvicorn + scribyte) regardless of how the server is
 # started. This must happen before any module-level logging calls.
 logging.config.dictConfig(LOGGING_CONFIG)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def determine_device_order(limit: str | None) -> list[str]:
@@ -28,10 +38,29 @@ def determine_device_order(limit: str | None) -> list[str]:
     return ["NPU", "GPU", "CPU"]
 
 
+def determine_model_path(selection: str | None) -> Path:
+    normalized = (selection or DEFAULT_MODEL_NAME).strip()
+    if not normalized:
+        normalized = DEFAULT_MODEL_NAME
+
+    candidate = Path(normalized)
+    if candidate.is_absolute() or candidate.parent != Path("."):
+        return candidate
+
+    model_name = normalized.lower()
+    if model_name.startswith("whisper_") and model_name.endswith("_ov"):
+        folder_name = model_name
+    else:
+        folder_name = f"whisper_{model_name}_ov"
+
+    return PROJECT_ROOT / folder_name
+
+
 def create_app(
     transcriber: Transcriber | None = None,
     recorder: Recorder | None = None,
     device_limit: str | None = None,
+    model_selection: str | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -41,6 +70,10 @@ def create_app(
         app.state.startup_log = startup_log
         app.state.transcriber = transcriber
         app.state.recorder = recorder
+        selected_model_path = determine_model_path(model_selection or os.environ.get(MODEL_ENV_VAR))
+        app.state.model_path = str(selected_model_path)
+        logger.info("Configured model path: %s", selected_model_path)
+        startup_log.append(f"Configured model path: {selected_model_path}")
 
         # determine device preference order
         device_order = determine_device_order(device_limit or os.environ.get("SCRIBYTE_LIMIT"))
@@ -58,7 +91,7 @@ def create_app(
                 logger.info("Initializing transcriber on %s", device)
                 startup_log.append(f"Initializing transcriber on {device}")
                 try:
-                    app.state.transcriber = WhisperTranscriber(model_path=MODEL_PATH, device=device)
+                    app.state.transcriber = WhisperTranscriber(model_path=str(selected_model_path), device=device)
                     app.state.transcriber.warmup()
                     runtime_name = getattr(app.state.transcriber, "runtime_device_name", None)
                     selected_device = device
@@ -66,11 +99,11 @@ def create_app(
                         "Initialized transcriber on %s (runtime device: %s, model: %s)",
                         device,
                         runtime_name,
-                        MODEL_PATH,
+                        selected_model_path,
                     )
                     startup_log.append(
                         f"Initialized transcriber on {device} "
-                        f"(runtime device: {runtime_name}, model: {MODEL_PATH})"
+                        f"(runtime device: {runtime_name}, model: {selected_model_path})"
                     )
                     break
                 except WhisperTranscriberError as error:

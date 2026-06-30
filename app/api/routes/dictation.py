@@ -1,7 +1,7 @@
 from typing import Annotated
 
 from anyio import to_thread
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.core.config import DEBUG_RECORDINGS_DIR
 from app.dependencies import get_optional_transcriber, get_recorder_state, get_startup_error, get_transcriber, get_startup_log
@@ -39,6 +39,7 @@ def get_devices() -> ListDevicesResponse:
 
 @router.get("/status", response_model=StatusResponse)
 def get_status(
+    request: Request,
     recorder_state: Annotated[RecorderState, Depends(get_recorder_state)],
     active_transcriber: Annotated[WhisperTranscriber | None, Depends(get_optional_transcriber)],
     startup_error: Annotated[str | None, Depends(get_startup_error)],
@@ -48,7 +49,7 @@ def get_status(
     return StatusResponse(
         ready=active_transcriber is not None and startup_error is None,
         device=getattr(active_transcriber, "device", None),
-        model_path=getattr(active_transcriber, "model_path", None),
+        model_path=getattr(active_transcriber, "model_path", getattr(request.app.state, "model_path", None)),
         recording=recorder_state.is_recording,
         sample_rate=recorder_state.sample_rate,
         startup_error=startup_error,

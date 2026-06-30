@@ -24,8 +24,9 @@ def get_startup_log(request: Request) -> list[str] | None:
 def get_transcriber(request: Request) -> WhisperTranscriber:
     transcriber = get_optional_transcriber(request)
     if transcriber is None:
+        configured_model_path = getattr(request.app.state, "model_path", MODEL_PATH)
         raise HTTPException(
             status_code=503,
-            detail=get_startup_error(request) or f"Transcriber for {MODEL_PATH} is not ready",
+            detail=get_startup_error(request) or f"Transcriber for {configured_model_path} is not ready",
         )
     return transcriber
