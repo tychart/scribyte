@@ -25,17 +25,19 @@ from app.services.transcriber import Transcriber, WhisperTranscriber, WhisperTra
 logging.config.dictConfig(LOGGING_CONFIG)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEVICE_FALLBACK_CHAIN = ["NPU", "GPU", "CPU"]
 
 
 def determine_device_order(limit: str | None) -> list[str]:
     if limit is None:
-        return ["NPU", "GPU", "CPU"]
-    limit = limit.lower()
-    if limit == "gpu":
-        return ["GPU", "CPU"]
-    if limit == "cpu":
-        return ["CPU"]
-    return ["NPU", "GPU", "CPU"]
+        return DEVICE_FALLBACK_CHAIN.copy()
+
+    normalized = limit.upper()
+    if normalized not in DEVICE_FALLBACK_CHAIN:
+        return DEVICE_FALLBACK_CHAIN.copy()
+
+    start_index = DEVICE_FALLBACK_CHAIN.index(normalized)
+    return DEVICE_FALLBACK_CHAIN[start_index:]
 
 
 def determine_model_path(selection: str | None) -> Path:

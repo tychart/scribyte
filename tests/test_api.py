@@ -443,6 +443,11 @@ class TestDeviceFallback:
 
         assert determine_device_order("GPU") == ["GPU", "CPU"]
 
+    def test_determine_device_order_npu(self) -> None:
+        from app.main import determine_device_order
+
+        assert determine_device_order("NPU") == ["NPU", "GPU", "CPU"]
+
     def test_determine_device_order_cpu(self) -> None:
         from app.main import determine_device_order
 
@@ -570,6 +575,37 @@ class TestDeviceFallback:
         assert "NPU" not in call_order  # NPU never tried
         # CPU should be in log as fallback
         assert any("falling back" in line.lower() for line in data["startup_log"])
+
+    def test_npu_limit_uses_normal_fallback_chain(self, monkeypatch: Any) -> None:
+        from app.main import create_app
+        import openvino_genai as ov_genai
+
+        call_order: list[str] = []
+
+        def record_device(model_path: str, device: str, *args: Any, **kwargs: Any) -> Any:
+            del model_path, args, kwargs
+            call_order.append(device)
+            if device == "NPU":
+                raise RuntimeError("NPU not available")
+            return _make_mock_pipeline()
+
+        monkeypatch.setattr(ov_genai, "WhisperPipeline", record_device)
+
+        app = create_app(device_limit="npu")
+
+        async def run_test() -> httpx.Response:
+            async with make_test_client(app) as client:
+                return await client.get("/status")
+
+        response = asyncio.run(run_test())
+        data = response.json()
+
+        assert response.status_code == 200
+        assert data["ready"] is True
+        assert data["device"] == "GPU"
+        assert call_order == ["NPU", "GPU"]
+        assert any("NPU not available" in line for line in data["startup_log"])
+        assert any(line == "Initializing transcriber on GPU" for line in data["startup_log"])
 
     def test_model_selection_uses_requested_model_folder(self, monkeypatch: Any) -> None:
         from app.main import create_app
